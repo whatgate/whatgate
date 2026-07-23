@@ -235,7 +235,7 @@ func main() {
 			defer exitMu.Unlock()
 			if on {
 				n.EnableGuardedExit(exitCfg)
-				n.EnableUDPExit() // note: UDP exit is not yet ExitGuard-gated (see backlog)
+				n.EnableGuardedUDPExit(exitCfg) // UDP forwarding under the same ExitGuard
 			} else {
 				n.DisableExit()
 				n.DisableUDPExit()

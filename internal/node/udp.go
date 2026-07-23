@@ -19,12 +19,28 @@ const UDPTunnelProtocol = libp2pprotocol.ID("/whatgate/udp/0.1.0")
 // udpIdleTimeout closes a per-target UDP relay socket after this much silence.
 const udpIdleTimeout = 60 * time.Second
 
-// EnableUDPExit makes this node relay UDP datagrams for others: each inbound UDP
-// tunnel stream is served by forwarding framed datagrams to their targets and
-// framing replies back. Gated by the same exit opt-in as TCP.
+// UDPAuthorizer authorizes forwarding to a target on the UDP exit, returning a
+// release func to call when the per-target socket is torn down. A nil authorizer
+// means allow everything.
+type UDPAuthorizer func(target string) (release func(), err error)
+
+// EnableUDPExit relays UDP datagrams for others without policy (allow all).
 func (n *Node) EnableUDPExit() {
 	n.h.SetStreamHandler(UDPTunnelProtocol, func(s network.Stream) {
-		relayUDP(streamConn{s})
+		relayUDP(streamConn{s}, nil)
+	})
+}
+
+// EnableGuardedUDPExit relays UDP datagrams, authorizing each new target through
+// cfg.Guard (same policy as the TCP exit: trust scope, reputation, port/domain,
+// concurrency).
+func (n *Node) EnableGuardedUDPExit(cfg GuardedExit) {
+	authorize := cfg.authorizer()
+	n.h.SetStreamHandler(UDPTunnelProtocol, func(s network.Stream) {
+		requesterID := s.Conn().RemotePeer().String()
+		relayUDP(streamConn{s}, func(target string) (func(), error) {
+			return authorize(requesterID, target)
+		})
 	})
 }
 
@@ -33,9 +49,16 @@ func (n *Node) DisableUDPExit() {
 	n.h.RemoveStreamHandler(UDPTunnelProtocol)
 }
 
+type udpTarget struct {
+	conn    *net.UDPConn
+	release func()
+}
+
 // relayUDP serves one UDP tunnel stream: it keeps a UDP socket per target
-// (NAT-like), sending each framed datagram out and framing replies back.
-func relayUDP(stream net.Conn) {
+// (NAT-like), sending each framed datagram out and framing replies back. If
+// authorize is non-nil, each new target must pass it (denied targets are
+// dropped).
+func relayUDP(stream net.Conn, authorize UDPAuthorizer) {
 	defer stream.Close()
 
 	var wmu sync.Mutex
@@ -46,11 +69,14 @@ func relayUDP(stream net.Conn) {
 	}
 
 	var cmu sync.Mutex
-	conns := make(map[string]*net.UDPConn)
+	targets := make(map[string]*udpTarget)
 	defer func() {
 		cmu.Lock()
-		for _, c := range conns {
-			_ = c.Close()
+		for _, t := range targets {
+			_ = t.conn.Close()
+			if t.release != nil {
+				t.release()
+			}
 		}
 		cmu.Unlock()
 	}()
@@ -62,21 +88,36 @@ func relayUDP(stream net.Conn) {
 		}
 
 		cmu.Lock()
-		conn, ok := conns[target]
+		t, ok := targets[target]
 		if !ok {
+			var release func()
+			if authorize != nil {
+				rel, err := authorize(target)
+				if err != nil {
+					cmu.Unlock()
+					continue // policy denied: drop datagrams to this target
+				}
+				release = rel
+			}
 			uaddr, err := net.ResolveUDPAddr("udp", target)
 			if err != nil {
+				if release != nil {
+					release()
+				}
 				cmu.Unlock()
 				continue
 			}
 			c, err := net.DialUDP("udp", nil, uaddr)
 			if err != nil {
+				if release != nil {
+					release()
+				}
 				cmu.Unlock()
 				continue
 			}
-			conn = c
-			conns[target] = c
-			go func(t string, c *net.UDPConn) {
+			t = &udpTarget{conn: c, release: release}
+			targets[target] = t
+			go func(name string, c *net.UDPConn) {
 				buf := make([]byte, 64*1024)
 				for {
 					_ = c.SetReadDeadline(time.Now().Add(udpIdleTimeout))
@@ -84,13 +125,13 @@ func relayUDP(stream net.Conn) {
 					if err != nil {
 						return
 					}
-					writeBack(t, buf[:nr])
+					writeBack(name, buf[:nr])
 				}
 			}(target, c)
 		}
 		cmu.Unlock()
 
-		_, _ = conn.Write(payload)
+		_, _ = t.conn.Write(payload)
 	}
 }
 

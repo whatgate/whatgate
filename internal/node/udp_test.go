@@ -3,8 +3,12 @@ package node
 import (
 	"context"
 	"net"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/whatgate/whatgate/internal/exit"
+	"github.com/whatgate/whatgate/internal/trust"
 )
 
 // startUDPEcho starts a UDP server that echoes each datagram back to its sender.
@@ -85,5 +89,76 @@ func TestUDPTunnelRoundTrip(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for UDP tunnel reply")
+	}
+}
+
+// receiveTimeout reads one reply, reporting whether it timed out.
+func receiveTimeout(s *UDPSession, d time.Duration) (payload []byte, timedOut bool) {
+	ch := make(chan []byte, 1)
+	go func() {
+		_, p, err := s.Receive()
+		if err == nil {
+			ch <- p
+		}
+	}()
+	select {
+	case p := <-ch:
+		return p, false
+	case <-time.After(d):
+		return nil, true
+	}
+}
+
+// TestGuardedUDPExitEnforcesPolicy checks the UDP exit drops datagrams to a
+// policy-blocked target while still serving an allowed one.
+func TestGuardedUDPExitEnforcesPolicy(t *testing.T) {
+	echoA := startUDPEcho(t) // allowed
+	echoB := startUDPEcho(t) // blocked by port
+
+	_, portBStr, _ := net.SplitHostPort(echoB)
+	portB, _ := strconv.Atoi(portBStr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	exitNode, err := New(ctx, WithListenAddrs("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("new exit: %v", err)
+	}
+	t.Cleanup(func() { _ = exitNode.Close() })
+	guard := exit.NewGuard(exit.Policy{Scope: trust.ScopeOpen, BlockedPorts: map[int]bool{portB: true}})
+	exitNode.EnableGuardedUDPExit(GuardedExit{
+		Guard:  guard,
+		TierOf: func(string) trust.Tier { return trust.TierStranger },
+	})
+
+	client, err := New(ctx, WithListenAddrs("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if err := client.Connect(ctx, exitNode.AddrInfo()); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	sess, err := client.OpenUDPSession(ctx, exitNode.ID())
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	// Allowed target replies.
+	if err := sess.Send(echoA, []byte("a")); err != nil {
+		t.Fatalf("send a: %v", err)
+	}
+	if p, timedOut := receiveTimeout(sess, 4*time.Second); timedOut || string(p) != "a" {
+		t.Fatalf("allowed target: payload=%q timedOut=%v", p, timedOut)
+	}
+
+	// Blocked target is dropped (no reply).
+	if err := sess.Send(echoB, []byte("b")); err != nil {
+		t.Fatalf("send b: %v", err)
+	}
+	if _, timedOut := receiveTimeout(sess, 2*time.Second); !timedOut {
+		t.Fatal("blocked target should have produced no reply")
 	}
 }

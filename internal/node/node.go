@@ -212,11 +212,18 @@ type GuardedExit struct {
 	Audit func(requesterID, target, outcome string)
 }
 
-// EnableGuardedExit serves as an exit, authorizing every request through
+// EnableGuardedExit serves as a TCP exit, authorizing every request through
 // cfg.Guard before dialing — refusing untrusted, low-reputation, blocked, or
 // excess requests.
 func (n *Node) EnableGuardedExit(cfg GuardedExit) {
-	n.setExitHandler(cfg.Dial, func(requesterID, target string) (func(), error) {
+	n.setExitHandler(cfg.Dial, cfg.authorizer())
+}
+
+// authorizer builds the per-request ExitGuard check (shared by the TCP and UDP
+// exits): it looks up the requester's tier and reputation, authorizes the target
+// against the guard, and reports/audits the outcome.
+func (cfg GuardedExit) authorizer() func(requesterID, target string) (func(), error) {
+	return func(requesterID, target string) (func(), error) {
 		host, portStr, err := net.SplitHostPort(target)
 		if err != nil {
 			return nil, err
@@ -249,7 +256,7 @@ func (n *Node) EnableGuardedExit(cfg GuardedExit) {
 			cfg.Audit(requesterID, target, outcome)
 		}
 		return release, err
-	})
+	}
 }
 
 // setExitHandler registers the tunnel stream handler, tracking exit load and
