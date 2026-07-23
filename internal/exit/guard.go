@@ -55,11 +55,42 @@ type Guard struct {
 
 	mu     sync.Mutex
 	active int
+
+	domMu          sync.RWMutex
+	blockedDomains map[string]bool // dynamic (static policy + threat feed)
 }
 
 // NewGuard creates a Guard for the given policy.
 func NewGuard(p Policy) *Guard {
-	return &Guard{policy: p}
+	bd := make(map[string]bool, len(p.BlockedDomains))
+	for d := range p.BlockedDomains {
+		bd[d] = true
+	}
+	return &Guard{policy: p, blockedDomains: bd}
+}
+
+// StaticBlockedDomains returns a copy of the operator-configured blocked domains
+// (the baseline to merge a threat feed onto).
+func (g *Guard) StaticBlockedDomains() map[string]bool {
+	out := make(map[string]bool, len(g.policy.BlockedDomains))
+	for d := range g.policy.BlockedDomains {
+		out[d] = true
+	}
+	return out
+}
+
+// SetBlockedDomains atomically replaces the blocked-domain set, e.g. after a
+// threat-feed refresh (pass the union of static + feed domains).
+func (g *Guard) SetBlockedDomains(domains map[string]bool) {
+	g.domMu.Lock()
+	g.blockedDomains = domains
+	g.domMu.Unlock()
+}
+
+func (g *Guard) isDomainBlocked(host string) bool {
+	g.domMu.RLock()
+	defer g.domMu.RUnlock()
+	return g.blockedDomains[host]
 }
 
 // Authorize decides whether to serve req. On success it returns a release func
@@ -74,7 +105,7 @@ func (g *Guard) Authorize(req Request) (release func(), err error) {
 	if g.policy.BlockedPorts[req.Port] {
 		return nil, ErrBlockedPort
 	}
-	if g.policy.BlockedDomains[req.Host] {
+	if g.isDomainBlocked(req.Host) {
 		return nil, ErrBlockedDomain
 	}
 

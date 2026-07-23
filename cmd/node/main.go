@@ -41,6 +41,7 @@ import (
 	"github.com/whatgate/whatgate/internal/node"
 	"github.com/whatgate/whatgate/internal/proxy"
 	"github.com/whatgate/whatgate/internal/routing"
+	"github.com/whatgate/whatgate/internal/threatfeed"
 	"github.com/whatgate/whatgate/internal/trust"
 	"github.com/whatgate/whatgate/internal/tun"
 )
@@ -64,6 +65,8 @@ func main() {
 	maxConns := flag.Int("max-conns", 0, "ExitGuard: max concurrent connections to serve as exit (0 = unlimited)")
 	minReputation := flag.Int("min-reputation", -1_000_000_000, "ExitGuard: refuse requesters whose reputation is below this (default effectively disabled)")
 	auditLog := flag.String("audit-log", "", "ExitGuard: append a JSON-lines record of served/denied requests to this file (accountability)")
+	threatFeed := flag.String("threat-feed", "", "ExitGuard: URL or file of known-malicious domains to block (merged with -block-domains)")
+	threatFeedInterval := flag.Duration("threat-feed-interval", time.Hour, "how often to refresh -threat-feed (0 = fetch once at startup)")
 	tunMode := flag.Bool("tun", false, "route ALL system traffic through the tunnel via a TUN device (needs -tags tun build, admin, and wintun.dll on Windows)")
 	tunDevice := flag.String("tun-device", "whatgate0", "TUN adapter name (TUN mode)")
 	tunMTU := flag.Int("tun-mtu", 1500, "TUN interface MTU (TUN mode)")
@@ -118,6 +121,40 @@ func main() {
 			log.Fatalf("exit policy: %v", err)
 		}
 		guard := exit.NewGuard(policy)
+
+		// Threat intelligence: merge a malicious-domain feed into the guard, and
+		// refresh it periodically.
+		if *threatFeed != "" {
+			applyFeed := func() {
+				feed, err := threatfeed.Fetch(*threatFeed)
+				if err != nil {
+					log.Printf("threat feed fetch: %v", err)
+					return
+				}
+				merged := guard.StaticBlockedDomains()
+				for d := range feed {
+					merged[d] = true
+				}
+				guard.SetBlockedDomains(merged)
+				fmt.Printf("threat feed: %d domains loaded from %s\n", len(feed), *threatFeed)
+			}
+			applyFeed()
+			if *threatFeedInterval > 0 {
+				go func() {
+					t := time.NewTicker(*threatFeedInterval)
+					defer t.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-t.C:
+							applyFeed()
+						}
+					}
+				}()
+			}
+		}
+
 		tierOf := func(requesterID string) trust.Tier {
 			if coord == nil {
 				return trust.TierStranger // manual mode: no trust graph available

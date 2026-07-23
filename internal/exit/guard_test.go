@@ -52,6 +52,23 @@ func TestAuthorizeRejectsBlockedDomain(t *testing.T) {
 	}
 }
 
+func TestSetBlockedDomainsUpdatesDynamically(t *testing.T) {
+	g := NewGuard(Policy{Scope: trust.ScopeOpen})
+
+	req := Request{RequesterTier: trust.TierStranger, Host: "feed-bad.example", Port: 443}
+	if release, err := g.Authorize(req); err != nil {
+		t.Fatalf("initially should be allowed: %v", err)
+	} else {
+		release()
+	}
+
+	// A threat feed refresh adds the domain.
+	g.SetBlockedDomains(map[string]bool{"feed-bad.example": true})
+	if _, err := g.Authorize(req); err != ErrBlockedDomain {
+		t.Fatalf("after feed update err = %v, want ErrBlockedDomain", err)
+	}
+}
+
 func TestAuthorizeAllowsAndReleases(t *testing.T) {
 	g := NewGuard(Policy{Scope: trust.ScopeOpen})
 
