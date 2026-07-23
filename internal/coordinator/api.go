@@ -3,11 +3,13 @@ package coordinator
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/whatgate/whatgate/internal/authn"
+	"github.com/whatgate/whatgate/internal/persist"
 	"github.com/whatgate/whatgate/internal/trust"
 )
 
@@ -76,10 +78,12 @@ type Server struct {
 	invites *InviteStore
 	graph   *trust.Graph
 	relay   *RelayInfo // optional co-located relay
+	rep     *trust.Reputation
 	now     func() time.Time
 
 	mu           sync.Mutex
 	groupSecrets map[string]string // groupID -> join secret
+	statePath    string            // if set, durable state is snapshotted here
 }
 
 // SetRelayInfo advertises a relay through the /relay endpoint.
@@ -94,8 +98,60 @@ func NewServer(dir *Directory, invites *InviteStore) *Server {
 		dir:          dir,
 		invites:      invites,
 		graph:        trust.NewGraph(),
+		rep:          trust.NewReputation(),
 		now:          time.Now,
 		groupSecrets: make(map[string]string),
+	}
+}
+
+// Reputation exposes the coordinator's reputation store.
+func (s *Server) Reputation() *trust.Reputation { return s.rep }
+
+// SetStatePath enables durable persistence: after each state-changing request,
+// the full snapshot is written to path (atomically).
+func (s *Server) SetStatePath(path string) { s.statePath = path }
+
+// Snapshot gathers the coordinator's durable state.
+func (s *Server) Snapshot() persist.Snapshot {
+	inv, adm := s.invites.Export()
+	groups, endorse := s.graph.Export()
+	prep, grep := s.rep.Export()
+	s.mu.Lock()
+	secrets := make(map[string]string, len(s.groupSecrets))
+	for k, v := range s.groupSecrets {
+		secrets[k] = v
+	}
+	s.mu.Unlock()
+	return persist.Snapshot{
+		Invites:         inv,
+		Admissions:      adm,
+		Groups:          groups,
+		Endorsements:    endorse,
+		GroupSecrets:    secrets,
+		PeerReputation:  prep,
+		GroupReputation: grep,
+	}
+}
+
+// LoadSnapshot restores durable state from snap.
+func (s *Server) LoadSnapshot(snap persist.Snapshot) {
+	s.invites.Import(snap.Invites, snap.Admissions)
+	s.graph.Import(snap.Groups, snap.Endorsements)
+	s.rep.Import(snap.PeerReputation, snap.GroupReputation)
+	s.mu.Lock()
+	for k, v := range snap.GroupSecrets {
+		s.groupSecrets[k] = v
+	}
+	s.mu.Unlock()
+}
+
+// save persists the current snapshot if a state path is configured.
+func (s *Server) save() {
+	if s.statePath == "" {
+		return
+	}
+	if err := persist.Save(s.statePath, s.Snapshot()); err != nil {
+		log.Printf("[coordinator] persist state: %v", err)
 	}
 }
 
@@ -157,11 +213,14 @@ func (s *Server) handleGroupJoin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	secret, exists := s.groupSecrets[req.GroupID]
+	if !exists {
+		s.groupSecrets[req.GroupID] = req.Secret
+	}
+	s.mu.Unlock()
+
 	switch {
 	case !exists:
-		s.groupSecrets[req.GroupID] = req.Secret
 		s.graph.CreateGroup(req.GroupID, req.PeerID) // founder
 	case secret == req.Secret:
 		s.graph.AddMember(req.GroupID, req.PeerID)
@@ -169,6 +228,7 @@ func (s *Server) handleGroupJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "wrong group secret", http.StatusForbidden)
 		return
 	}
+	s.save()
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -194,6 +254,7 @@ func (s *Server) handleGroupEndorse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.graph.Endorse(req.FromGroup, req.ToGroup)
+	s.save()
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -238,6 +299,7 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.save() // admission changed
 	writeJSON(w, http.StatusOK, joinResponse{Issuer: issuer})
 }
 

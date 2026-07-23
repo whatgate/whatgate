@@ -48,6 +48,47 @@ func (g *Graph) addMemberLocked(groupID, peerID string) {
 	members[peerID] = true
 }
 
+// Export returns the graph's membership and endorsement edges as plain maps,
+// for persistence.
+func (g *Graph) Export() (groups map[string][]string, endorsements map[string][]string) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	groups = make(map[string][]string, len(g.groupMembers))
+	for gid, members := range g.groupMembers {
+		for p := range members {
+			groups[gid] = append(groups[gid], p)
+		}
+	}
+	endorsements = make(map[string][]string, len(g.endorsements))
+	for fg, set := range g.endorsements {
+		for tg := range set {
+			endorsements[fg] = append(endorsements[fg], tg)
+		}
+	}
+	return groups, endorsements
+}
+
+// Import merges membership and endorsement edges into the graph (used on load).
+func (g *Graph) Import(groups map[string][]string, endorsements map[string][]string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for gid, members := range groups {
+		for _, p := range members {
+			g.addMemberLocked(gid, p)
+		}
+	}
+	for fg, tgs := range endorsements {
+		set := g.endorsements[fg]
+		if set == nil {
+			set = make(map[string]bool)
+			g.endorsements[fg] = set
+		}
+		for _, tg := range tgs {
+			set[tg] = true
+		}
+	}
+}
+
 // IsMember reports whether peerID belongs to groupID.
 func (g *Graph) IsMember(groupID, peerID string) bool {
 	g.mu.RLock()

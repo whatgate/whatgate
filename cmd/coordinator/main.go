@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/whatgate/whatgate/internal/coordinator"
+	"github.com/whatgate/whatgate/internal/persist"
 	"github.com/whatgate/whatgate/internal/relay"
 )
 
@@ -29,13 +30,27 @@ func main() {
 	uses := flag.Int("uses", 100, "how many members the seeded invite may admit")
 	ttl := flag.Duration("ttl", 60*time.Second, "directory entry time-to-live")
 	relayListen := flag.String("relay-listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr for the co-located relay (empty to disable)")
+	statePath := flag.String("state", "", "path to a JSON state file for durable admissions/groups/reputation (empty = in-memory only)")
 	flag.Parse()
 
 	dir := coordinator.NewDirectory(*ttl, nil)
 	invites := coordinator.NewInviteStore(nil)
-	invites.Create(*invite, *issuer, *uses)
-
 	srv := coordinator.NewServer(dir, invites)
+
+	// Restore durable state, then seed the invite only if it is not already
+	// known, and enable save-on-change.
+	if *statePath != "" {
+		snap, err := persist.Load(*statePath)
+		if err != nil {
+			log.Fatalf("load state %s: %v", *statePath, err)
+		}
+		srv.LoadSnapshot(snap)
+		srv.SetStatePath(*statePath)
+		fmt.Printf("state file: %s\n", *statePath)
+	}
+	if !invites.Exists(*invite) {
+		invites.Create(*invite, *issuer, *uses)
+	}
 
 	// Co-locate a Circuit Relay v2 so nodes that cannot hole-punch still connect.
 	if *relayListen != "" {

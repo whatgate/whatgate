@@ -50,8 +50,8 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ### 方式 B：经协调器发现（邀请准入 + 按地区选出口）
 
 ```bash
-# 协调器（兼跑中继），播种邀请码
-coordinator -addr :8080 -invite welcome
+# 协调器（兼跑中继），播种邀请码；-state 让准入/小网/声誉跨重启留存
+coordinator -addr :8080 -invite welcome -state ./coordinator-state.json
 
 # 出口节点：加入并注册为某地区(如 JP)出口
 node -coordinator http://<host>:8080 -invite welcome -exit -region JP

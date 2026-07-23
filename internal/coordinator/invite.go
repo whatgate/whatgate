@@ -4,6 +4,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/whatgate/whatgate/internal/persist"
 )
 
 // Errors returned by InviteStore.
@@ -89,4 +91,39 @@ func (s *InviteStore) AdmissionOf(peerID string) (Admission, bool) {
 	defer s.mu.Unlock()
 	a, ok := s.admissions[peerID]
 	return a, ok
+}
+
+// Exists reports whether an invite code is present.
+func (s *InviteStore) Exists(code string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.invites[code]
+	return ok
+}
+
+// Export returns the invites and admissions for persistence.
+func (s *InviteStore) Export() (map[string]persist.InviteRecord, map[string]persist.AdmissionRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inv := make(map[string]persist.InviteRecord, len(s.invites))
+	for code, iv := range s.invites {
+		inv[code] = persist.InviteRecord{Issuer: iv.issuer, MaxUses: iv.maxUses, Uses: iv.uses}
+	}
+	adm := make(map[string]persist.AdmissionRecord, len(s.admissions))
+	for pid, a := range s.admissions {
+		adm[pid] = persist.AdmissionRecord{PeerID: a.PeerID, Code: a.Code, Issuer: a.Issuer, At: a.At.Unix()}
+	}
+	return inv, adm
+}
+
+// Import merges persisted invites and admissions (used on load).
+func (s *InviteStore) Import(inv map[string]persist.InviteRecord, adm map[string]persist.AdmissionRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for code, r := range inv {
+		s.invites[code] = &invite{issuer: r.Issuer, maxUses: r.MaxUses, uses: r.Uses}
+	}
+	for pid, r := range adm {
+		s.admissions[pid] = Admission{PeerID: r.PeerID, Code: r.Code, Issuer: r.Issuer, At: time.Unix(r.At, 0)}
+	}
 }
