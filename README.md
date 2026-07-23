@@ -13,6 +13,7 @@
 - **两个平面**：
   - **控制面**（Coordinator，HTTP）：只碰元数据——邀请准入、节点目录、中继广播。看不到业务流量。
   - **数据面**（libp2p）：代理流量**点对点加密直连**；打洞失败时走 Circuit Relay v2 中继兜底。
+- **协议**：TCP（SOCKS5 CONNECT）与 UDP（SOCKS5 UDP ASSOCIATE，覆盖 DNS/游戏/音视频）均经加密隧道转发。
 - **技术栈**：Go + [libp2p](https://libp2p.io/)。
 - **分发**：编译为单个静态二进制，终端用户下载即用，无需安装任何运行时。
 
