@@ -69,12 +69,13 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```bash
 # 只给自己小网/已认证小网当出口；封禁高危端口；限并发
 node -coordinator http://host:8080 -invite welcome -exit -region JP \
-     -group myfriends \
+     -group myfriends -group-secret ourSecret \
      -exit-scope conservative \
      -block-domains evil.example.com \
      -max-conns 50
 ```
 
+- `-group` + `-group-secret`：加入小网（首个加入者设口令；成员用同一口令自证入组，陌生人无口令进不来）
 - `-exit-scope conservative`：只服务信任圈内的请求者（陌生人被拒）
 - SMTP 端口（25/465/587）默认封禁；`-block-ports` 追加
 - `-block-domains`：目标域名黑名单

@@ -30,8 +30,8 @@ func newSignedClient(t *testing.T, baseURL string) (*Client, string) {
 }
 
 // admitAndRegister creates a fresh signed identity, admits it with code, and
-// registers it as a JP exit. Returns its peer ID.
-func admitAndRegister(t *testing.T, baseURL, code string) string {
+// registers it as a JP exit. Returns its signing client and peer ID.
+func admitAndRegister(t *testing.T, baseURL, code string) (*Client, string) {
 	t.Helper()
 	c, id := newSignedClient(t, baseURL)
 	if _, err := c.Join(code, id); err != nil {
@@ -40,5 +40,5 @@ func admitAndRegister(t *testing.T, baseURL, code string) string {
 	if err := c.Register(NodeInfo{PeerID: id, Region: "JP", WantExit: true}); err != nil {
 		t.Fatalf("register %s: %v", id, err)
 	}
-	return id
+	return c, id
 }

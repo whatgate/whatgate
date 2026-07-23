@@ -48,6 +48,13 @@ func (g *Graph) addMemberLocked(groupID, peerID string) {
 	members[peerID] = true
 }
 
+// IsMember reports whether peerID belongs to groupID.
+func (g *Graph) IsMember(groupID, peerID string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.groupMembers[groupID][peerID]
+}
+
 // GroupsOf returns the IDs of groups the peer belongs to.
 func (g *Graph) GroupsOf(peerID string) []string {
 	g.mu.RLock()

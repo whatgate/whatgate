@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/whatgate/whatgate/internal/authn"
@@ -43,14 +44,17 @@ type directoryEntry struct {
 	Tier     trust.Tier `json:"tier"` // trust tier relative to the ?from peer
 }
 
-type groupMemberRequest struct {
-	GroupID string `json:"groupID"`
-	PeerID  string `json:"peerID"`
+type joinGroupRequest struct {
+	GroupID string           `json:"groupID"`
+	PeerID  string           `json:"peerID"`
+	Secret  string           `json:"secret"`
+	Auth    authn.SignedAuth `json:"auth"`
 }
 
 type endorseRequest struct {
-	FromGroup string `json:"fromGroup"`
-	ToGroup   string `json:"toGroup"`
+	FromGroup string           `json:"fromGroup"`
+	ToGroup   string           `json:"toGroup"`
+	Auth      authn.SignedAuth `json:"auth"`
 }
 
 type trustResponse struct {
@@ -73,6 +77,9 @@ type Server struct {
 	graph   *trust.Graph
 	relay   *RelayInfo // optional co-located relay
 	now     func() time.Time
+
+	mu           sync.Mutex
+	groupSecrets map[string]string // groupID -> join secret
 }
 
 // SetRelayInfo advertises a relay through the /relay endpoint.
@@ -83,7 +90,13 @@ func (s *Server) SetRelayInfo(peerID string, addrs []string) {
 // NewServer builds a coordinator HTTP server over the given directory and
 // invite store.
 func NewServer(dir *Directory, invites *InviteStore) *Server {
-	return &Server{dir: dir, invites: invites, graph: trust.NewGraph(), now: time.Now}
+	return &Server{
+		dir:          dir,
+		invites:      invites,
+		graph:        trust.NewGraph(),
+		now:          time.Now,
+		groupSecrets: make(map[string]string),
+	}
 }
 
 // checkAuth verifies that a proves ownership of claimedPeerID for action.
@@ -104,7 +117,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/register", s.handleRegister)
 	mux.HandleFunc("/directory", s.handleDirectory)
 	mux.HandleFunc("/relay", s.handleRelay)
-	mux.HandleFunc("/group/create", s.handleGroupCreate)
 	mux.HandleFunc("/group/join", s.handleGroupJoin)
 	mux.HandleFunc("/group/endorse", s.handleGroupEndorse)
 	mux.HandleFunc("/trust", s.handleTrust)
@@ -122,27 +134,46 @@ func (s *Server) handleTrust(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, trustResponse{Tier: tier})
 }
 
-// handleGroupCreate creates a group (小网) with the given founder.
-func (s *Server) handleGroupCreate(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeGroupMember(w, r)
-	if !ok {
-		return
-	}
-	s.graph.CreateGroup(req.GroupID, req.PeerID)
-	w.WriteHeader(http.StatusOK)
-}
-
-// handleGroupJoin adds a peer to a group.
+// handleGroupJoin adds the (authenticated) peer to a small-network group. The
+// first join creates the group and sets its secret (the joiner becomes founder);
+// subsequent joins must present the matching secret. This authenticates who
+// joins (no impersonation) and gates which group (strangers without the secret
+// cannot slip into your trust circle).
 func (s *Server) handleGroupJoin(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeGroupMember(w, r)
-	if !ok {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.graph.AddMember(req.GroupID, req.PeerID)
+	var req joinGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// The signer may only add itself (signer == peerID).
+	action := "group/join:" + req.GroupID + ":" + req.PeerID
+	if err := s.checkAuth(req.Auth, action, req.PeerID); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	secret, exists := s.groupSecrets[req.GroupID]
+	switch {
+	case !exists:
+		s.groupSecrets[req.GroupID] = req.Secret
+		s.graph.CreateGroup(req.GroupID, req.PeerID) // founder
+	case secret == req.Secret:
+		s.graph.AddMember(req.GroupID, req.PeerID)
+	default:
+		http.Error(w, "wrong group secret", http.StatusForbidden)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleGroupEndorse records that one group vouches for another.
+// handleGroupEndorse records that fromGroup vouches for toGroup. Only a member
+// of fromGroup may make it endorse another group.
 func (s *Server) handleGroupEndorse(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -153,21 +184,17 @@ func (s *Server) handleGroupEndorse(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	action := "group/endorse:" + req.FromGroup + ":" + req.ToGroup
+	if err := s.checkAuth(req.Auth, action, req.Auth.PeerID); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if !s.graph.IsMember(req.FromGroup, req.Auth.PeerID) {
+		http.Error(w, "endorser must be a member of the endorsing group", http.StatusForbidden)
+		return
+	}
 	s.graph.Endorse(req.FromGroup, req.ToGroup)
 	w.WriteHeader(http.StatusOK)
-}
-
-func decodeGroupMember(w http.ResponseWriter, r *http.Request) (groupMemberRequest, bool) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return groupMemberRequest{}, false
-	}
-	var req groupMemberRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return groupMemberRequest{}, false
-	}
-	return req, true
 }
 
 // handleRelay returns the co-located relay's addressing, or 404 if none.

@@ -54,6 +54,7 @@ func main() {
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
 	toRegion := flag.String("to", "", "desired exit region to discover via coordinator (client mode)")
 	group := flag.String("group", "", "join (or create) this small-network group id")
+	groupSecret := flag.String("group-secret", "", "secret required to join -group (the first joiner sets it)")
 	endorse := flag.String("endorse", "", "endorse fromGroup:toGroup (your group vouches for another)")
 	trustScope := flag.String("trust-scope", "", "trust range for exit selection: conservative|open (required with -to; no default by design)")
 	exitScope := flag.String("exit-scope", "open", "ExitGuard: whose traffic to serve as exit: conservative|open")
@@ -140,7 +141,7 @@ func main() {
 		}
 
 		if *group != "" {
-			if err := coord.JoinGroup(*group, selfID); err != nil {
+			if err := coord.JoinGroup(*group, selfID, *groupSecret); err != nil {
 				log.Printf("join group %s: %v", *group, err)
 			} else {
 				fmt.Printf("joined small-network group %s\n", *group)

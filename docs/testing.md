@@ -90,10 +90,10 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 例（同小网放行）：
 
 ```bash
-# 出口
-./bin/node -coordinator http://127.0.0.1:8080 -invite welcome -exit -region JP -group fam
-# 客户端（保守，但同属 fam）
-./bin/node -coordinator http://127.0.0.1:8080 -invite welcome -to JP -trust-scope conservative -group fam -socks 127.0.0.1:1080
+# 出口（首个加入 fam 者设口令）
+./bin/node -coordinator http://127.0.0.1:8080 -invite welcome -exit -region JP -group fam -group-secret famkey
+# 客户端（保守，但用同一口令同属 fam）
+./bin/node -coordinator http://127.0.0.1:8080 -invite welcome -to JP -trust-scope conservative -group fam -group-secret famkey -socks 127.0.0.1:1080
 ```
 
 ### 2.4 出口保护 ExitGuard（M5）

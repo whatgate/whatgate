@@ -66,7 +66,7 @@ function Run-Guard($idx,$exitExtra,$clientExtra,$curlHost,$expectSuccess,$label)
 
 $r=@()
 $r += Run-Guard 1 @('-exit-scope','conservative')                          @('-trust-scope','open')                 'api.ipify.org' $false 'exit conservative + stranger -> DENY'
-$r += Run-Guard 2 @('-exit-scope','conservative','-group','fam')           @('-trust-scope','open','-group','fam')   'api.ipify.org' $true  'exit conservative + same-group -> ALLOW'
+$r += Run-Guard 2 @('-exit-scope','conservative','-group','fam','-group-secret','famkey') @('-trust-scope','open','-group','fam','-group-secret','famkey') 'api.ipify.org' $true 'exit conservative + same-group -> ALLOW'
 $r += Run-Guard 3 @('-exit-scope','open','-block-domains','api.ipify.org') @('-trust-scope','open')                  'api.ipify.org' $false 'exit open + blocked domain -> DENY'
 $r += Run-Guard 4 @('-exit-scope','open','-block-domains','api.ipify.org') @('-trust-scope','open')                  'ifconfig.me'   $true  'exit open + allowed domain -> ALLOW'
 

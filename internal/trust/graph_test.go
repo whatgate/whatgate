@@ -30,6 +30,21 @@ func TestAddMemberJoinsGroup(t *testing.T) {
 	}
 }
 
+func TestIsMember(t *testing.T) {
+	g := NewGraph()
+	g.CreateGroup("g1", "alice")
+
+	if !g.IsMember("g1", "alice") {
+		t.Error("alice should be a member of g1")
+	}
+	if g.IsMember("g1", "bob") {
+		t.Error("bob is not a member of g1")
+	}
+	if g.IsMember("nope", "alice") {
+		t.Error("no such group")
+	}
+}
+
 func TestPeerCanBelongToMultipleGroups(t *testing.T) {
 	g := NewGraph()
 	g.CreateGroup("g1", "alice")

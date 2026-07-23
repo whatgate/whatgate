@@ -38,13 +38,13 @@ function Run-Scenario($idx,$scope,$exitGroup,$clientGroup,$expectSuccess,$label)
         if(-not (Wait-ForLine $co 'coordinator listening' 10)){ throw "coord $idx not up" }
 
         $eArgs=@('-listen',"/ip4/127.0.0.1/tcp/$eport",'-coordinator',"http://127.0.0.1:$port",'-invite','welcome','-exit','-region','JP')
-        if($exitGroup){ $eArgs+=@('-group',$exitGroup) }
+        if($exitGroup){ $eArgs+=@('-group',$exitGroup,'-group-secret','famkey') }
         $pe=Start-Process "$bin\node.exe" -ArgumentList $eArgs -RedirectStandardOutput $eo -RedirectStandardError "$eo.err" -WindowStyle Hidden -PassThru; $procs+=$pe
         if(-not (Wait-ForLine $eo 'exit: ENABLED' 15)){ throw "exit $idx not ready" }
         Start-Sleep -Seconds 2
 
         $cArgs=@('-listen',"/ip4/127.0.0.1/tcp/$cport",'-coordinator',"http://127.0.0.1:$port",'-invite','welcome','-to','JP','-trust-scope',$scope,'-socks',"127.0.0.1:$socks")
-        if($clientGroup){ $cArgs+=@('-group',$clientGroup) }
+        if($clientGroup){ $cArgs+=@('-group',$clientGroup,'-group-secret','famkey') }
         $pc=Start-Process "$bin\node.exe" -ArgumentList $cArgs -RedirectStandardOutput $cl -RedirectStandardError "$cl.err" -WindowStyle Hidden -PassThru; $procs+=$pc
         $ready=Wait-ForLine $cl 'SOCKS5 proxy on' 12
 

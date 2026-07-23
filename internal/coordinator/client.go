@@ -131,19 +131,34 @@ func (c *Client) TrustBetween(from, to string) (trust.Tier, error) {
 	return out.Tier, nil
 }
 
-// CreateGroup creates a group (小网) with peerID as founder.
-func (c *Client) CreateGroup(groupID, peerID string) error {
-	return c.postJSON("/group/create", groupMemberRequest{GroupID: groupID, PeerID: peerID}, nil)
+// JoinGroup joins (or, for the first member, creates) a small-network group.
+// The caller must be the peer identified by peerID (its Signer signs the join),
+// and must present the group's secret; the first join sets the secret.
+func (c *Client) JoinGroup(groupID, peerID, secret string) error {
+	auth, err := c.sign("group/join:" + groupID + ":" + peerID)
+	if err != nil {
+		return err
+	}
+	return c.postJSON("/group/join", joinGroupRequest{
+		GroupID: groupID,
+		PeerID:  peerID,
+		Secret:  secret,
+		Auth:    auth,
+	}, nil)
 }
 
-// JoinGroup adds peerID to a group.
-func (c *Client) JoinGroup(groupID, peerID string) error {
-	return c.postJSON("/group/join", groupMemberRequest{GroupID: groupID, PeerID: peerID}, nil)
-}
-
-// EndorseGroup records that fromGroup vouches for toGroup.
+// EndorseGroup records that fromGroup vouches for toGroup. The caller must sign
+// as a member of fromGroup.
 func (c *Client) EndorseGroup(fromGroup, toGroup string) error {
-	return c.postJSON("/group/endorse", endorseRequest{FromGroup: fromGroup, ToGroup: toGroup}, nil)
+	auth, err := c.sign("group/endorse:" + fromGroup + ":" + toGroup)
+	if err != nil {
+		return err
+	}
+	return c.postJSON("/group/endorse", endorseRequest{
+		FromGroup: fromGroup,
+		ToGroup:   toGroup,
+		Auth:      auth,
+	}, nil)
 }
 
 // ErrNoRelay is returned by Relay when the coordinator advertises none.
