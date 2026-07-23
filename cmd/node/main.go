@@ -90,6 +90,11 @@ func main() {
 	defer n.Close()
 	selfID := n.ID().String()
 
+	// Sign identity-proving requests (join/register) with the node's key.
+	if coord != nil {
+		coord.Signer = n.SignAuth
+	}
+
 	fmt.Printf("peer id: %s\n", selfID)
 	fmt.Println("listening on:")
 	for _, a := range n.Addrs() {

@@ -9,6 +9,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strconv"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
 
+	"github.com/whatgate/whatgate/internal/authn"
 	"github.com/whatgate/whatgate/internal/exit"
 	"github.com/whatgate/whatgate/internal/trust"
 	"github.com/whatgate/whatgate/internal/tunnel"
@@ -93,6 +95,16 @@ func New(ctx context.Context, opts ...Option) (*Node, error) {
 		return nil, err
 	}
 	return &Node{h: h}, nil
+}
+
+// SignAuth signs an authentication envelope for the given action with this
+// node's private key, proving ownership of its peer ID to the coordinator.
+func (n *Node) SignAuth(action string) (authn.SignedAuth, error) {
+	priv := n.h.Peerstore().PrivKey(n.h.ID())
+	if priv == nil {
+		return authn.SignedAuth{}, errors.New("node: no private key available for signing")
+	}
+	return authn.Sign(priv, action, time.Now())
 }
 
 // AddrStrings returns the node's listen multiaddrs as strings, for advertising

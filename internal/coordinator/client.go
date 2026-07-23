@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/whatgate/whatgate/internal/authn"
 	"github.com/whatgate/whatgate/internal/trust"
 )
 
@@ -18,6 +19,12 @@ import (
 type Client struct {
 	baseURL string
 	http    *http.Client
+
+	// Signer produces the signed authentication attached to identity-proving
+	// requests (join/register). It must sign with the private key of the peer ID
+	// used in those requests. If nil, such requests go unsigned and the
+	// coordinator will reject them.
+	Signer func(action string) (authn.SignedAuth, error)
 }
 
 // NewClient creates a coordinator client targeting baseURL (e.g.
@@ -26,10 +33,21 @@ func NewClient(baseURL string) *Client {
 	return &Client{baseURL: baseURL, http: http.DefaultClient}
 }
 
+func (c *Client) sign(action string) (authn.SignedAuth, error) {
+	if c.Signer == nil {
+		return authn.SignedAuth{}, nil
+	}
+	return c.Signer(action)
+}
+
 // Join redeems an invite code to admit peerID, returning the vouching issuer.
 func (c *Client) Join(code, peerID string) (issuer string, err error) {
+	auth, err := c.sign("join")
+	if err != nil {
+		return "", err
+	}
 	var resp joinResponse
-	if err := c.postJSON("/join", joinRequest{Code: code, PeerID: peerID}, &resp); err != nil {
+	if err := c.postJSON("/join", joinRequest{Code: code, PeerID: peerID, Auth: auth}, &resp); err != nil {
 		return "", err
 	}
 	return resp.Issuer, nil
@@ -37,12 +55,17 @@ func (c *Client) Join(code, peerID string) (issuer string, err error) {
 
 // Register advertises the node's presence in the directory.
 func (c *Client) Register(info NodeInfo) error {
+	auth, err := c.sign("register")
+	if err != nil {
+		return err
+	}
 	return c.postJSON("/register", registerRequest{
 		PeerID:   info.PeerID,
 		Addrs:    info.Addrs,
 		Region:   info.Region,
 		WantExit: info.WantExit,
 		Load:     info.Load,
+		Auth:     auth,
 	}, nil)
 }
 

@@ -14,9 +14,9 @@ func TestClientJoinRegisterDirectory(t *testing.T) {
 	ts := httptest.NewServer(NewServer(dir, inv).Handler())
 	defer ts.Close()
 
-	c := NewClient(ts.URL)
+	c, id := newSignedClient(t, ts.URL)
 
-	issuer, err := c.Join("welcome", "peerA")
+	issuer, err := c.Join("welcome", id)
 	if err != nil {
 		t.Fatalf("Join: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestClientJoinRegisterDirectory(t *testing.T) {
 	}
 
 	err = c.Register(NodeInfo{
-		PeerID:   "peerA",
+		PeerID:   id,
 		Addrs:    []string{"/ip4/1.2.3.4/tcp/4001"},
 		Region:   "JP",
 		WantExit: true,
@@ -41,7 +41,7 @@ func TestClientJoinRegisterDirectory(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("directory has %d entries, want 1", len(list))
 	}
-	if list[0].PeerID != "peerA" || list[0].Region != "JP" || !list[0].WantExit {
+	if list[0].PeerID != id || list[0].Region != "JP" || !list[0].WantExit {
 		t.Fatalf("entry = %+v", list[0])
 	}
 }
@@ -83,8 +83,8 @@ func TestClientJoinUnknownCodeErrors(t *testing.T) {
 	ts := httptest.NewServer(NewServer(dir, inv).Handler())
 	defer ts.Close()
 
-	c := NewClient(ts.URL)
-	if _, err := c.Join("nope", "peerA"); err == nil {
+	c, id := newSignedClient(t, ts.URL)
+	if _, err := c.Join("nope", id); err == nil {
 		t.Fatal("Join with unknown code should error")
 	}
 }

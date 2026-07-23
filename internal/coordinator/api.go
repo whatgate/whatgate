@@ -4,14 +4,21 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
+	"github.com/whatgate/whatgate/internal/authn"
 	"github.com/whatgate/whatgate/internal/trust"
 )
 
+// authMaxSkew is how far a signed request's timestamp may be from the
+// coordinator's clock (anti-replay window).
+const authMaxSkew = 2 * time.Minute
+
 // Wire types for the coordinator HTTP/JSON API.
 type joinRequest struct {
-	Code   string `json:"code"`
-	PeerID string `json:"peerID"`
+	Code   string           `json:"code"`
+	PeerID string           `json:"peerID"`
+	Auth   authn.SignedAuth `json:"auth"`
 }
 
 type joinResponse struct {
@@ -19,11 +26,12 @@ type joinResponse struct {
 }
 
 type registerRequest struct {
-	PeerID   string   `json:"peerID"`
-	Addrs    []string `json:"addrs"`
-	Region   string   `json:"region"`
-	WantExit bool     `json:"wantExit"`
-	Load     int      `json:"load"`
+	PeerID   string           `json:"peerID"`
+	Addrs    []string         `json:"addrs"`
+	Region   string           `json:"region"`
+	WantExit bool             `json:"wantExit"`
+	Load     int              `json:"load"`
+	Auth     authn.SignedAuth `json:"auth"`
 }
 
 type directoryEntry struct {
@@ -64,6 +72,7 @@ type Server struct {
 	invites *InviteStore
 	graph   *trust.Graph
 	relay   *RelayInfo // optional co-located relay
+	now     func() time.Time
 }
 
 // SetRelayInfo advertises a relay through the /relay endpoint.
@@ -74,7 +83,15 @@ func (s *Server) SetRelayInfo(peerID string, addrs []string) {
 // NewServer builds a coordinator HTTP server over the given directory and
 // invite store.
 func NewServer(dir *Directory, invites *InviteStore) *Server {
-	return &Server{dir: dir, invites: invites, graph: trust.NewGraph()}
+	return &Server{dir: dir, invites: invites, graph: trust.NewGraph(), now: time.Now}
+}
+
+// checkAuth verifies that a proves ownership of claimedPeerID for action.
+func (s *Server) checkAuth(a authn.SignedAuth, action, claimedPeerID string) error {
+	if a.PeerID != claimedPeerID {
+		return errors.New("auth: peer ID does not match request")
+	}
+	return authn.Verify(a, action, s.now(), authMaxSkew)
 }
 
 // Graph exposes the coordinator's trust graph (authoritative store).
@@ -177,6 +194,10 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if err := s.checkAuth(req.Auth, "join", req.PeerID); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
 
 	issuer, err := s.invites.Redeem(req.Code, req.PeerID)
 	switch {
@@ -202,6 +223,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if err := s.checkAuth(req.Auth, "register", req.PeerID); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
