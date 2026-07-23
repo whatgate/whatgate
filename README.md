@@ -63,6 +63,15 @@ node -coordinator http://<host>:8080 -invite welcome -to JP -socks 127.0.0.1:108
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```
 
+### 本地状态面板
+
+任意节点加 `-web` 即可在浏览器查看实时状态（身份、角色、出口开关与负载、已连出口、地区、信任范围等，自动刷新）：
+
+```bash
+node -coordinator http://host:8080 -invite welcome -to JP -trust-scope open -web 127.0.0.1:7070
+# 浏览器打开 http://127.0.0.1:7070
+```
+
 ### 出口保护（ExitGuard）
 
 作为出口时可加保护策略，抵御被陌生人滥用：
