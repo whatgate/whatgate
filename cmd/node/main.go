@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -44,6 +45,7 @@ import (
 	"github.com/whatgate/whatgate/internal/threatfeed"
 	"github.com/whatgate/whatgate/internal/trust"
 	"github.com/whatgate/whatgate/internal/tun"
+	"github.com/whatgate/whatgate/internal/webui"
 )
 
 func main() {
@@ -67,6 +69,7 @@ func main() {
 	auditLog := flag.String("audit-log", "", "ExitGuard: append a JSON-lines record of served/denied requests to this file (accountability)")
 	threatFeed := flag.String("threat-feed", "", "ExitGuard: URL or file of known-malicious domains to block (merged with -block-domains)")
 	threatFeedInterval := flag.Duration("threat-feed-interval", time.Hour, "how often to refresh -threat-feed (0 = fetch once at startup)")
+	webAddr := flag.String("web", "", "serve a local status dashboard at this address, e.g. 127.0.0.1:7070")
 	tunMode := flag.Bool("tun", false, "route ALL system traffic through the tunnel via a TUN device (needs -tags tun build, admin, and wintun.dll on Windows)")
 	tunDevice := flag.String("tun-device", "whatgate0", "TUN adapter name (TUN mode)")
 	tunMTU := flag.Int("tun-mtu", 1500, "TUN interface MTU (TUN mode)")
@@ -96,6 +99,7 @@ func main() {
 	}
 	defer n.Close()
 	selfID := n.ID().String()
+	var connectedExit string // exit peer ID this client tunnels through (for the dashboard)
 
 	// Sign identity-proving requests (join/register) with the node's key.
 	if coord != nil {
@@ -246,6 +250,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("discover exit: %v", err)
 			}
+			connectedExit = ai.ID.String()
 			startClient(ctx, n, ai, *socksAddr)
 		}
 	}
@@ -256,6 +261,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("parse -connect: %v", err)
 		}
+		connectedExit = ai.ID.String()
 		startClient(ctx, n, ai, *socksAddr)
 	}
 
@@ -270,6 +276,47 @@ func main() {
 		}
 		defer tun.Stop()
 		fmt.Printf("TUN mode: ENABLED on %s → SOCKS %s (all system traffic routed through the tunnel)\n", *tunDevice, *socksAddr)
+	}
+
+	// Local status dashboard.
+	if *webAddr != "" {
+		isClient := *toRegion != "" || *connect != ""
+		role := "idle"
+		switch {
+		case *asExit && isClient:
+			role = "client+exit"
+		case *asExit:
+			role = "exit"
+		case isClient:
+			role = "client"
+		}
+		socks := ""
+		if isClient {
+			socks = *socksAddr
+		}
+		started := time.Now()
+		statusFn := func() webui.Status {
+			return webui.Status{
+				PeerID:        selfID,
+				Role:          role,
+				Coordinator:   *coordURL,
+				ExitEnabled:   *asExit,
+				ExitRegion:    *region,
+				ExitLoad:      n.ExitLoad(),
+				ToRegion:      *toRegion,
+				TrustScope:    *trustScope,
+				ConnectedExit: connectedExit,
+				SocksAddr:     socks,
+				Uptime:        time.Since(started).Round(time.Second).String(),
+			}
+		}
+		l, err := net.Listen("tcp", *webAddr)
+		if err != nil {
+			log.Fatalf("web console: %v", err)
+		}
+		go func() { _ = http.Serve(l, webui.NewServer(statusFn).Handler()) }()
+		go func() { <-ctx.Done(); _ = l.Close() }()
+		fmt.Printf("web console: http://%s\n", *webAddr)
 	}
 
 	fmt.Println("running; press Ctrl+C to stop")
