@@ -10,6 +10,7 @@ package node
 import (
 	"context"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +23,8 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
 
+	"github.com/whatgate/whatgate/internal/exit"
+	"github.com/whatgate/whatgate/internal/trust"
 	"github.com/whatgate/whatgate/internal/tunnel"
 )
 
@@ -178,10 +181,42 @@ func CircuitAddrsVia(relay peer.AddrInfo) ([]multiaddr.Multiaddr, error) {
 // requested target via dial. This is the opt-in that turns a node into an exit
 // for others; callers must only invoke it with the user's explicit consent.
 func (n *Node) EnableExit(dial tunnel.DialFunc) {
+	n.setExitHandler(dial, nil)
+}
+
+// EnableGuardedExit is EnableExit with an ExitGuard: each request is authorized
+// against guard using the requester's trust tier (from tierOf) before dialing.
+// This is how an exit refuses strangers, blocked destinations, or excess load.
+func (n *Node) EnableGuardedExit(dial tunnel.DialFunc, guard *exit.Guard, tierOf func(requesterID string) trust.Tier) {
+	n.setExitHandler(dial, func(requesterID, target string) (func(), error) {
+		host, portStr, err := net.SplitHostPort(target)
+		if err != nil {
+			return nil, err
+		}
+		port, _ := strconv.Atoi(portStr)
+		return guard.Authorize(exit.Request{
+			RequesterTier: tierOf(requesterID),
+			Host:          host,
+			Port:          port,
+		})
+	})
+}
+
+// setExitHandler registers the tunnel stream handler, tracking exit load and
+// applying an optional per-request authorizer (ExitGuard).
+func (n *Node) setExitHandler(dial tunnel.DialFunc, authWithRequester func(requesterID, target string) (func(), error)) {
 	n.h.SetStreamHandler(TunnelProtocol, func(s network.Stream) {
+		requesterID := s.Conn().RemotePeer().String()
 		n.exitLoad.Add(1)
 		defer n.exitLoad.Add(-1)
-		_ = tunnel.ServeExit(streamConn{s}, dial)
+
+		var authorize tunnel.Authorizer
+		if authWithRequester != nil {
+			authorize = func(target string) (func(), error) {
+				return authWithRequester(requesterID, target)
+			}
+		}
+		_ = tunnel.ServeExit(streamConn{s}, authorize, dial)
 	})
 }
 

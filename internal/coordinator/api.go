@@ -45,6 +45,10 @@ type endorseRequest struct {
 	ToGroup   string `json:"toGroup"`
 }
 
+type trustResponse struct {
+	Tier trust.Tier `json:"tier"`
+}
+
 // RelayInfo advertises the coordinator's co-located Circuit Relay so nodes can
 // configure it as a fallback path.
 type RelayInfo struct {
@@ -86,7 +90,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/group/create", s.handleGroupCreate)
 	mux.HandleFunc("/group/join", s.handleGroupJoin)
 	mux.HandleFunc("/group/endorse", s.handleGroupEndorse)
+	mux.HandleFunc("/trust", s.handleTrust)
 	return mux
+}
+
+// handleTrust returns the trust tier from one peer toward another.
+func (s *Server) handleTrust(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	tier := s.graph.Trust(q.Get("from"), q.Get("to"))
+	writeJSON(w, http.StatusOK, trustResponse{Tier: tier})
 }
 
 // handleGroupCreate creates a group (小网) with the given founder.

@@ -89,6 +89,25 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 	return nodes, tiers, nil
 }
 
+// TrustBetween returns the trust tier from one peer toward another, as computed
+// by the coordinator's authoritative graph.
+func (c *Client) TrustBetween(from, to string) (trust.Tier, error) {
+	u := c.baseURL + "/trust?from=" + url.QueryEscape(from) + "&to=" + url.QueryEscape(to)
+	resp, err := c.http.Get(u)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, statusError("GET /trust", resp)
+	}
+	var out trustResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, err
+	}
+	return out.Tier, nil
+}
+
 // CreateGroup creates a group (小网) with peerID as founder.
 func (c *Client) CreateGroup(groupID, peerID string) error {
 	return c.postJSON("/group/create", groupMemberRequest{GroupID: groupID, PeerID: peerID}, nil)

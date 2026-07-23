@@ -42,7 +42,7 @@ func TestServeExitDialsTargetAndPipes(t *testing.T) {
 	clientEnd, exitEnd := net.Pipe()
 	t.Cleanup(func() { _ = clientEnd.Close() })
 
-	go func() { _ = ServeExit(exitEnd, dial) }()
+	go func() { _ = ServeExit(exitEnd, nil, dial) }()
 
 	done := make(chan error, 1)
 	go func() {

@@ -18,15 +18,29 @@ import (
 // DialFunc dials a target address ("host:port") on the exit side.
 type DialFunc func(ctx context.Context, addr string) (net.Conn, error)
 
+// Authorizer decides whether the exit may serve a request for the given target
+// ("host:port"). On approval it returns a release func to be called when the
+// connection ends. A nil Authorizer means allow everything (no ExitGuard).
+type Authorizer func(target string) (release func(), err error)
+
 // ServeExit handles one inbound tunnel stream on the exit node: it reads the
-// requested target, dials it via dial, and relays bytes both ways until either
-// side closes.
-func ServeExit(stream net.Conn, dial DialFunc) error {
+// requested target, applies the authorizer (ExitGuard), dials the target, and
+// relays bytes both ways until either side closes. A denied request closes the
+// stream without dialing.
+func ServeExit(stream net.Conn, authorize Authorizer, dial DialFunc) error {
 	defer stream.Close()
 
 	addr, err := protocol.ReadTarget(stream)
 	if err != nil {
 		return err
+	}
+
+	if authorize != nil {
+		release, err := authorize(addr)
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
 
 	remote, err := dial(context.Background(), addr)

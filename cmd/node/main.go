@@ -27,6 +27,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/whatgate/whatgate/internal/coordinator"
+	"github.com/whatgate/whatgate/internal/exit"
 	"github.com/whatgate/whatgate/internal/node"
 	"github.com/whatgate/whatgate/internal/proxy"
 	"github.com/whatgate/whatgate/internal/routing"
@@ -53,6 +55,10 @@ func main() {
 	group := flag.String("group", "", "join (or create) this small-network group id")
 	endorse := flag.String("endorse", "", "endorse fromGroup:toGroup (your group vouches for another)")
 	trustScope := flag.String("trust-scope", "", "trust range for exit selection: conservative|open (required with -to; no default by design)")
+	exitScope := flag.String("exit-scope", "open", "ExitGuard: whose traffic to serve as exit: conservative|open")
+	blockPorts := flag.String("block-ports", "", "ExitGuard: extra destination ports to block, comma-separated (SMTP ports blocked by default)")
+	blockDomains := flag.String("block-domains", "", "ExitGuard: destination domains to block, comma-separated")
+	maxConns := flag.Int("max-conns", 0, "ExitGuard: max concurrent connections to serve as exit (0 = unlimited)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -87,13 +93,31 @@ func main() {
 	}
 
 	if *asExit {
-		// WhatGate safety note: becoming an exit is opt-in. In M2 these flags are
-		// the explicit consent; later milestones add trust-scope and policy.
-		n.EnableExit(func(ctx context.Context, addr string) (net.Conn, error) {
+		// Becoming an exit is opt-in (this flag is the consent). ExitGuard then
+		// protects the operator: it only serves requesters within exit-scope and
+		// refuses blocked destinations / excess load.
+		dial := func(ctx context.Context, addr string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "tcp", addr)
-		})
-		fmt.Println("exit: ENABLED — serving other peers' traffic through this node")
+		}
+		policy, err := buildExitPolicy(*exitScope, *blockPorts, *blockDomains, *maxConns)
+		if err != nil {
+			log.Fatalf("exit policy: %v", err)
+		}
+		guard := exit.NewGuard(policy)
+		tierOf := func(requesterID string) trust.Tier {
+			if coord == nil {
+				return trust.TierStranger // manual mode: no trust graph available
+			}
+			t, err := coord.TrustBetween(selfID, requesterID)
+			if err != nil {
+				return trust.TierStranger
+			}
+			return t
+		}
+		n.EnableGuardedExit(dial, guard, tierOf)
+		fmt.Printf("exit: ENABLED (exit-scope=%s, blocked-ports=%d, blocked-domains=%d, max-conns=%d)\n",
+			policy.Scope, len(policy.BlockedPorts), len(policy.BlockedDomains), policy.MaxConns)
 	}
 
 	// Coordinator-based flow: join, register presence, discover exits.
@@ -248,6 +272,36 @@ func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n
 			registerOnce(c, selfID, n.AddrStrings(), region, wantExit, n.ExitLoad())
 		}
 	}
+}
+
+// buildExitPolicy assembles an ExitGuard policy from CLI flags. SMTP ports are
+// always blocked by default; -block-ports adds to them.
+func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns int) (exit.Policy, error) {
+	scope, err := trust.ParseScope(scopeStr)
+	if err != nil {
+		return exit.Policy{}, err
+	}
+	ports := exit.DefaultBlockedPorts()
+	for _, p := range splitCSV(portsCSV) {
+		if v, err := strconv.Atoi(p); err == nil {
+			ports[v] = true
+		}
+	}
+	domains := make(map[string]bool)
+	for _, d := range splitCSV(domainsCSV) {
+		domains[d] = true
+	}
+	return exit.Policy{Scope: scope, BlockedPorts: ports, BlockedDomains: domains, MaxConns: maxConns}, nil
+}
+
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // parsePeer turns a /p2p/ multiaddr string into an AddrInfo.
