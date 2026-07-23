@@ -39,7 +39,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 
 | 优先级 | 项 | 说明 |
 |---|---|---|
-| P1 | ~~**UDP 支持**~~ ✅ **已完成** | SOCKS5 UDP ASSOCIATE + libp2p UDP 数据报隧道（`pkg/protocol` 帧、`node` UDPSession/出口转发、`proxy` UDP 中继）。DNS-over-UDP 经隧道真实出网验证。**剩：UDP 出口接 ExitGuard**（当前 UDP 转发未受策略约束）。 |
+| P1 | ~~**UDP 支持**~~ ✅ **已完成** | SOCKS5 UDP ASSOCIATE + libp2p UDP 数据报隧道（`pkg/protocol` 帧、`node` UDPSession/出口转发、`proxy` UDP 中继），DNS-over-UDP 真实出网验证。UDP 出口已接 ExitGuard（与 TCP 共用授权：信任范围/声誉/端口/域名/并发）。 |
 | P2 | **选路精细化** | 延迟周期性重探 + 移动平均；可配的加权综合评分（信任/延迟/负载权重）。 |
 | P2 | **DNS 策略** | 明确并可配 DNS 解析位置（出口侧解析利于解锁）；文档化防 DNS 泄漏。 |
 
@@ -108,7 +108,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 **Phase 2 出口治理闭环 100% 完成**（准入→身份→信任→声誉→出口门槛→留痕→威胁情报→衰减）。**下一大块=Phase 3（传输/全局模式）或 Phase 4（UI/移动端）。**
 
 ### Phase 3 — 传输与全局模式（独立轨，可与 Phase 2 并行）
-10. **UDP 支持** ✅ 已完成（SOCKS5 UDP ASSOCIATE + UDP 隧道，DNS 出网验证）。剩 UDP 出口接 ExitGuard。
+10. **UDP 支持** ✅ 已完成（SOCKS5 UDP ASSOCIATE + UDP 隧道 + UDP 出口 ExitGuard，DNS 出网验证）。
 11. **TUN 自动路由 / 排除自身流量** ← **下一项**。免手动配路由。
 12. **跨 NAT 真实验证** — 有两台异网机器即可做（Phase 0 发布后）。
 
