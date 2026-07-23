@@ -199,18 +199,31 @@ func (n *Node) EnableExit(dial tunnel.DialFunc) {
 // EnableGuardedExit is EnableExit with an ExitGuard: each request is authorized
 // against guard using the requester's trust tier (from tierOf) before dialing.
 // This is how an exit refuses strangers, blocked destinations, or excess load.
-func (n *Node) EnableGuardedExit(dial tunnel.DialFunc, guard *exit.Guard, tierOf func(requesterID string) trust.Tier) {
+//
+// report, if non-nil, is called with the outcome of each request (served, or
+// blocked by destination policy) so the coordinator can adjust the requester's
+// reputation. It should not block (fire-and-forget).
+func (n *Node) EnableGuardedExit(dial tunnel.DialFunc, guard *exit.Guard, tierOf func(requesterID string) trust.Tier, report func(requesterID string, outcome trust.Outcome)) {
 	n.setExitHandler(dial, func(requesterID, target string) (func(), error) {
 		host, portStr, err := net.SplitHostPort(target)
 		if err != nil {
 			return nil, err
 		}
 		port, _ := strconv.Atoi(portStr)
-		return guard.Authorize(exit.Request{
+		release, err := guard.Authorize(exit.Request{
 			RequesterTier: tierOf(requesterID),
 			Host:          host,
 			Port:          port,
 		})
+		if report != nil {
+			switch {
+			case err == nil:
+				report(requesterID, trust.OutcomeServed)
+			case errors.Is(err, exit.ErrBlockedDomain), errors.Is(err, exit.ErrBlockedPort):
+				report(requesterID, trust.OutcomeBlocked)
+			}
+		}
+		return release, err
 	})
 }
 

@@ -112,6 +112,37 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 	return nodes, tiers, nil
 }
 
+// ReportOutcome reports (signed) an outcome about a requester's behavior, which
+// the coordinator turns into a reputation change.
+func (c *Client) ReportOutcome(subject string, outcome trust.Outcome) error {
+	auth, err := c.sign("report:" + subject + ":" + string(outcome))
+	if err != nil {
+		return err
+	}
+	return c.postJSON("/report", reportRequest{
+		Subject: subject,
+		Outcome: string(outcome),
+		Auth:    auth,
+	}, nil)
+}
+
+// ReputationOf returns a peer's current reputation score.
+func (c *Client) ReputationOf(peerID string) (int, error) {
+	resp, err := c.http.Get(c.baseURL + "/reputation?peer=" + url.QueryEscape(peerID))
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, statusError("GET /reputation", resp)
+	}
+	var out reputationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, err
+	}
+	return out.Score, nil
+}
+
 // TrustBetween returns the trust tier from one peer toward another, as computed
 // by the coordinator's authoritative graph.
 func (c *Client) TrustBetween(from, to string) (trust.Tier, error) {

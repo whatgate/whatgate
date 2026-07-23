@@ -125,7 +125,13 @@ func main() {
 			}
 			return t
 		}
-		n.EnableGuardedExit(dial, guard, tierOf)
+		var report func(requesterID string, outcome trust.Outcome)
+		if coord != nil {
+			report = func(requesterID string, outcome trust.Outcome) {
+				go func() { _ = coord.ReportOutcome(requesterID, outcome) }()
+			}
+		}
+		n.EnableGuardedExit(dial, guard, tierOf, report)
 		fmt.Printf("exit: ENABLED (exit-scope=%s, blocked-ports=%d, blocked-domains=%d, max-conns=%d)\n",
 			policy.Scope, len(policy.BlockedPorts), len(policy.BlockedDomains), policy.MaxConns)
 	}

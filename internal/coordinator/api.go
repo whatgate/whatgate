@@ -63,6 +63,16 @@ type trustResponse struct {
 	Tier trust.Tier `json:"tier"`
 }
 
+type reportRequest struct {
+	Subject string           `json:"subject"` // peer the outcome is about
+	Outcome string           `json:"outcome"` // trust.Outcome wire value
+	Auth    authn.SignedAuth `json:"auth"`    // the reporting exit signs
+}
+
+type reputationResponse struct {
+	Score int `json:"score"`
+}
+
 // RelayInfo advertises the coordinator's co-located Circuit Relay so nodes can
 // configure it as a fallback path.
 type RelayInfo struct {
@@ -176,7 +186,56 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/group/join", s.handleGroupJoin)
 	mux.HandleFunc("/group/endorse", s.handleGroupEndorse)
 	mux.HandleFunc("/trust", s.handleTrust)
+	mux.HandleFunc("/report", s.handleReport)
+	mux.HandleFunc("/reputation", s.handleReputation)
 	return mux
+}
+
+// handleReport applies a reputation change based on an exit's report about a
+// requester's behavior. The reporter must be an admitted, authenticated member
+// (reports are attributable — see backlog for rate-limiting/weighting).
+func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req reportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	action := "report:" + req.Subject + ":" + req.Outcome
+	if err := s.checkAuth(req.Auth, action, req.Auth.PeerID); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if _, admitted := s.invites.AdmissionOf(req.Auth.PeerID); !admitted {
+		http.Error(w, "only admitted members may report", http.StatusForbidden)
+		return
+	}
+	outcome, err := trust.ParseOutcome(req.Outcome)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	delta := outcome.Delta()
+	s.rep.AdjustPeer(req.Subject, delta)
+	for _, g := range s.graph.GroupsOf(req.Subject) {
+		s.rep.AdjustGroup(g, delta)
+	}
+	s.save()
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleReputation returns a peer's current reputation score.
+func (s *Server) handleReputation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	peerID := r.URL.Query().Get("peer")
+	writeJSON(w, http.StatusOK, reputationResponse{Score: s.rep.PeerScore(peerID)})
 }
 
 // handleTrust returns the trust tier from one peer toward another.
