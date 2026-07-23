@@ -35,7 +35,7 @@ func TestTwoNodesTunnelThroughExit(t *testing.T) {
 	echo := startEchoServer(t)
 	ctx := context.Background()
 
-	exit, err := New(ctx, "/ip4/127.0.0.1/tcp/0")
+	exit, err := New(ctx, WithListenAddrs("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {
 		t.Fatalf("new exit node: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestTwoNodesTunnelThroughExit(t *testing.T) {
 		return net.Dial("tcp", echo.Addr().String())
 	})
 
-	client, err := New(ctx, "/ip4/127.0.0.1/tcp/0")
+	client, err := New(ctx, WithListenAddrs("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {
 		t.Fatalf("new client node: %v", err)
 	}

@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/whatgate/whatgate/internal/coordinator"
+	"github.com/whatgate/whatgate/internal/relay"
 )
 
 func main() {
@@ -26,6 +28,7 @@ func main() {
 	issuer := flag.String("issuer", "founder", "issuer attributed to the seeded invite")
 	uses := flag.Int("uses", 100, "how many members the seeded invite may admit")
 	ttl := flag.Duration("ttl", 60*time.Second, "directory entry time-to-live")
+	relayListen := flag.String("relay-listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr for the co-located relay (empty to disable)")
 	flag.Parse()
 
 	dir := coordinator.NewDirectory(*ttl, nil)
@@ -33,6 +36,24 @@ func main() {
 	invites.Create(*invite, *issuer, *uses)
 
 	srv := coordinator.NewServer(dir, invites)
+
+	// Co-locate a Circuit Relay v2 so nodes that cannot hole-punch still connect.
+	if *relayListen != "" {
+		rl, err := relay.New(context.Background(), *relayListen)
+		if err != nil {
+			log.Fatalf("start relay: %v", err)
+		}
+		defer rl.Close()
+		addrs := make([]string, 0, len(rl.Addrs()))
+		for _, a := range rl.Addrs() {
+			addrs = append(addrs, a.String())
+		}
+		srv.SetRelayInfo(rl.ID().String(), addrs)
+		fmt.Printf("relay peer id: %s\n", rl.ID())
+		for _, a := range addrs {
+			fmt.Printf("  relay addr: %s/p2p/%s\n", a, rl.ID())
+		}
+	}
 
 	fmt.Printf("WhatGate coordinator listening on %s\n", *addr)
 	fmt.Printf("seeded invite: %q (issuer=%s, uses=%d)\n", *invite, *issuer, *uses)

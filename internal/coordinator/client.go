@@ -3,6 +3,7 @@ package coordinator
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,6 +67,29 @@ func (c *Client) Directory() ([]NodeInfo, error) {
 		})
 	}
 	return nodes, nil
+}
+
+// ErrNoRelay is returned by Relay when the coordinator advertises none.
+var ErrNoRelay = errors.New("coordinator: no relay configured")
+
+// Relay fetches the coordinator's advertised relay, or ErrNoRelay if absent.
+func (c *Client) Relay() (RelayInfo, error) {
+	resp, err := c.http.Get(c.baseURL + "/relay")
+	if err != nil {
+		return RelayInfo{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return RelayInfo{}, ErrNoRelay
+	}
+	if resp.StatusCode != http.StatusOK {
+		return RelayInfo{}, statusError("GET /relay", resp)
+	}
+	var info RelayInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return RelayInfo{}, err
+	}
+	return info, nil
 }
 
 // postJSON POSTs body as JSON to path and, if out is non-nil, decodes the

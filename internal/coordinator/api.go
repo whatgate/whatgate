@@ -30,12 +30,25 @@ type directoryEntry struct {
 	WantExit bool     `json:"wantExit"`
 }
 
+// RelayInfo advertises the coordinator's co-located Circuit Relay so nodes can
+// configure it as a fallback path.
+type RelayInfo struct {
+	PeerID string   `json:"peerID"`
+	Addrs  []string `json:"addrs"`
+}
+
 // Server exposes the coordinator's directory and admission over HTTP/JSON. It is
 // the control plane only: nodes register presence and discover exits here, but
 // proxied traffic never touches it.
 type Server struct {
 	dir     *Directory
 	invites *InviteStore
+	relay   *RelayInfo // optional co-located relay
+}
+
+// SetRelayInfo advertises a relay through the /relay endpoint.
+func (s *Server) SetRelayInfo(peerID string, addrs []string) {
+	s.relay = &RelayInfo{PeerID: peerID, Addrs: addrs}
 }
 
 // NewServer builds a coordinator HTTP server over the given directory and
@@ -50,7 +63,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/join", s.handleJoin)
 	mux.HandleFunc("/register", s.handleRegister)
 	mux.HandleFunc("/directory", s.handleDirectory)
+	mux.HandleFunc("/relay", s.handleRelay)
 	return mux
+}
+
+// handleRelay returns the co-located relay's addressing, or 404 if none.
+func (s *Server) handleRelay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.relay == nil {
+		http.Error(w, "no relay configured", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, *s.relay)
 }
 
 // handleJoin admits a peer by redeeming an invite code.

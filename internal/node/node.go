@@ -16,6 +16,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/whatgate/whatgate/internal/tunnel"
@@ -29,21 +30,54 @@ type Node struct {
 	h host.Host
 }
 
-// New creates a Node listening on the given multiaddr strings. With no
-// addresses it listens on an OS-assigned TCP port on all interfaces.
-func New(ctx context.Context, listenAddrs ...string) (*Node, error) {
-	if len(listenAddrs) == 0 {
-		listenAddrs = []string{"/ip4/0.0.0.0/tcp/0"}
+// config holds Node construction options.
+type config struct {
+	listenAddrs  []string
+	staticRelays []peer.AddrInfo
+}
+
+// Option configures a Node.
+type Option func(*config)
+
+// WithListenAddrs sets the libp2p listen multiaddrs. Defaults to an OS-assigned
+// TCP port on all interfaces.
+func WithListenAddrs(addrs ...string) Option {
+	return func(c *config) { c.listenAddrs = addrs }
+}
+
+// WithStaticRelays configures Circuit Relay v2 fallback: the node reserves slots
+// on these relays and advertises /p2p-circuit addresses, so peers can still
+// reach it when direct connectivity (hole punching) fails.
+func WithStaticRelays(relays ...peer.AddrInfo) Option {
+	return func(c *config) { c.staticRelays = relays }
+}
+
+// New creates a Node. Without options it listens on an OS-assigned TCP port on
+// all interfaces with no relay fallback.
+func New(ctx context.Context, opts ...Option) (*Node, error) {
+	var cfg config
+	for _, o := range opts {
+		o(&cfg)
 	}
+	if len(cfg.listenAddrs) == 0 {
+		cfg.listenAddrs = []string{"/ip4/0.0.0.0/tcp/0"}
+	}
+
 	// NAT traversal for the P2P data plane: map ports where possible, offer an
-	// AutoNAT service to peers, and hole-punch through NATs (DCUtR). When direct
-	// connectivity fails, a Circuit Relay fallback is layered on in later work.
-	h, err := libp2p.New(
-		libp2p.ListenAddrStrings(listenAddrs...),
+	// AutoNAT service to peers, and hole-punch through NATs (DCUtR).
+	libOpts := []libp2p.Option{
+		libp2p.ListenAddrStrings(cfg.listenAddrs...),
 		libp2p.NATPortMap(),
 		libp2p.EnableNATService(),
 		libp2p.EnableHolePunching(),
-	)
+	}
+	// Circuit Relay v2 fallback: reserve on the given relays when direct
+	// connectivity cannot be established.
+	if len(cfg.staticRelays) > 0 {
+		libOpts = append(libOpts, libp2p.EnableAutoRelayWithStaticRelays(cfg.staticRelays))
+	}
+
+	h, err := libp2p.New(libOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +129,33 @@ func (n *Node) Connect(ctx context.Context, ai peer.AddrInfo) error {
 	return n.h.Connect(ctx, ai)
 }
 
+// ReserveRelay reserves a slot on the given relay so other peers can reach this
+// node through it when a direct connection cannot be established. It connects to
+// the relay first. This is the explicit counterpart to AutoRelay, used when a
+// node knows it needs relay reachability.
+func (n *Node) ReserveRelay(ctx context.Context, relay peer.AddrInfo) error {
+	if err := n.h.Connect(ctx, relay); err != nil {
+		return err
+	}
+	_, err := relayclient.Reserve(ctx, n.h, relay)
+	return err
+}
+
+// CircuitAddrsVia builds /p2p-circuit multiaddrs that dial a target peer through
+// the given relay. Combine with a target peer ID to form an AddrInfo that forces
+// a relayed connection.
+func CircuitAddrsVia(relay peer.AddrInfo) ([]multiaddr.Multiaddr, error) {
+	hop, err := multiaddr.NewMultiaddr("/p2p/" + relay.ID.String() + "/p2p-circuit")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]multiaddr.Multiaddr, 0, len(relay.Addrs))
+	for _, a := range relay.Addrs {
+		out = append(out, a.Encapsulate(hop))
+	}
+	return out, nil
+}
+
 // EnableExit makes this node serve inbound tunnel streams, dialing each
 // requested target via dial. This is the opt-in that turns a node into an exit
 // for others; callers must only invoke it with the user's explicit consent.
@@ -115,7 +176,11 @@ func (n *Node) DisableExit() {
 func (n *Node) NewClientDialer(exit peer.ID) *tunnel.ClientDialer {
 	return &tunnel.ClientDialer{
 		Open: func(ctx context.Context) (net.Conn, error) {
-			s, err := n.h.NewStream(ctx, exit, TunnelProtocol)
+			// Allow opening the tunnel stream over a limited (relayed) connection;
+			// otherwise NewStream would wait for a direct connection that may never
+			// exist when only relay connectivity is available.
+			sctx := network.WithAllowLimitedConn(ctx, "whatgate-tunnel")
+			s, err := n.h.NewStream(sctx, exit, TunnelProtocol)
 			if err != nil {
 				return nil, err
 			}

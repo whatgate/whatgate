@@ -46,6 +46,37 @@ func TestClientJoinRegisterDirectory(t *testing.T) {
 	}
 }
 
+func TestClientRelayReturnsAdvertisedRelay(t *testing.T) {
+	dir := NewDirectory(time.Minute, nil)
+	inv := NewInviteStore(nil)
+	srv := NewServer(dir, inv)
+	srv.SetRelayInfo("RID", []string{"/ip4/1.2.3.4/tcp/4001"})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	c := NewClient(ts.URL)
+	info, err := c.Relay()
+	if err != nil {
+		t.Fatalf("Relay: %v", err)
+	}
+	if info.PeerID != "RID" || len(info.Addrs) != 1 || info.Addrs[0] != "/ip4/1.2.3.4/tcp/4001" {
+		t.Fatalf("relay info = %+v", info)
+	}
+}
+
+func TestClientRelayAbsentReturnsErrNoRelay(t *testing.T) {
+	dir := NewDirectory(time.Minute, nil)
+	inv := NewInviteStore(nil)
+	ts := httptest.NewServer(NewServer(dir, inv).Handler())
+	defer ts.Close()
+
+	c := NewClient(ts.URL)
+	if _, err := c.Relay(); err != ErrNoRelay {
+		t.Fatalf("Relay err = %v, want ErrNoRelay", err)
+	}
+}
+
 func TestClientJoinUnknownCodeErrors(t *testing.T) {
 	dir := NewDirectory(time.Minute, nil)
 	inv := NewInviteStore(nil)

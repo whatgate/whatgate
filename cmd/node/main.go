@@ -53,7 +53,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	n, err := node.New(ctx, *listen)
+	nodeOpts := []node.Option{node.WithListenAddrs(*listen)}
+
+	var coord *coordinator.Client
+	if *coordURL != "" {
+		coord = coordinator.NewClient(*coordURL)
+		// Configure the coordinator's relay as a fallback path, if it advertises
+		// one, so this node stays reachable when hole punching fails.
+		if info, err := coord.Relay(); err == nil {
+			if ai, err := node.AddrInfoFromStrings(info.PeerID, info.Addrs); err == nil {
+				nodeOpts = append(nodeOpts, node.WithStaticRelays(ai))
+				fmt.Printf("relay fallback: %s\n", ai.ID)
+			}
+		}
+	}
+
+	n, err := node.New(ctx, nodeOpts...)
 	if err != nil {
 		log.Fatalf("start node: %v", err)
 	}
@@ -77,22 +92,20 @@ func main() {
 	}
 
 	// Coordinator-based flow: join, register presence, discover exits.
-	if *coordURL != "" {
-		c := coordinator.NewClient(*coordURL)
-
+	if coord != nil {
 		if *invite != "" {
-			issuer, err := c.Join(*invite, selfID)
+			issuer, err := coord.Join(*invite, selfID)
 			if err != nil {
 				log.Fatalf("join via coordinator: %v", err)
 			}
 			fmt.Printf("joined network (vouched by %s)\n", issuer)
 		}
 
-		registerOnce(c, selfID, n.AddrStrings(), *region, *asExit)
-		go keepRegistered(ctx, c, selfID, n, *region, *asExit)
+		registerOnce(coord, selfID, n.AddrStrings(), *region, *asExit)
+		go keepRegistered(ctx, coord, selfID, n, *region, *asExit)
 
 		if *toRegion != "" {
-			ai, err := discoverExit(c, *toRegion, selfID)
+			ai, err := discoverExit(coord, *toRegion, selfID)
 			if err != nil {
 				log.Fatalf("discover exit: %v", err)
 			}
