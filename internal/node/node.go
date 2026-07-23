@@ -10,6 +10,8 @@ package node
 import (
 	"context"
 	"net"
+	"sync/atomic"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -17,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/whatgate/whatgate/internal/tunnel"
@@ -27,8 +30,13 @@ const TunnelProtocol = protocol.ID("/whatgate/tunnel/0.1.0")
 
 // Node is a WhatGate participant backed by a libp2p host.
 type Node struct {
-	h host.Host
+	h        host.Host
+	exitLoad atomic.Int64 // active inbound tunnel streams being served as exit
 }
+
+// ExitLoad reports how many tunnel streams this node is currently serving as an
+// exit, used as a load signal for exit selection.
+func (n *Node) ExitLoad() int { return int(n.exitLoad.Load()) }
 
 // config holds Node construction options.
 type config struct {
@@ -129,6 +137,16 @@ func (n *Node) Connect(ctx context.Context, ai peer.AddrInfo) error {
 	return n.h.Connect(ctx, ai)
 }
 
+// Ping connects to a peer if needed and measures round-trip latency, used as a
+// selection signal. Returns the RTT of the first successful ping.
+func (n *Node) Ping(ctx context.Context, ai peer.AddrInfo) (time.Duration, error) {
+	if err := n.h.Connect(ctx, ai); err != nil {
+		return 0, err
+	}
+	res := <-ping.Ping(ctx, n.h, ai.ID)
+	return res.RTT, res.Error
+}
+
 // ReserveRelay reserves a slot on the given relay so other peers can reach this
 // node through it when a direct connection cannot be established. It connects to
 // the relay first. This is the explicit counterpart to AutoRelay, used when a
@@ -161,6 +179,8 @@ func CircuitAddrsVia(relay peer.AddrInfo) ([]multiaddr.Multiaddr, error) {
 // for others; callers must only invoke it with the user's explicit consent.
 func (n *Node) EnableExit(dial tunnel.DialFunc) {
 	n.h.SetStreamHandler(TunnelProtocol, func(s network.Stream) {
+		n.exitLoad.Add(1)
+		defer n.exitLoad.Add(-1)
 		_ = tunnel.ServeExit(streamConn{s}, dial)
 	})
 }

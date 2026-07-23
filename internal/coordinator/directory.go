@@ -18,6 +18,7 @@ type NodeInfo struct {
 	Addrs    []string // dialable multiaddrs
 	Region   string   // exit region tag, e.g. "JP", "US"
 	WantExit bool     // whether the node has opted in to serve as an exit
+	Load     int      // exit's current active connection count (for ranking)
 	LastSeen time.Time
 }
 

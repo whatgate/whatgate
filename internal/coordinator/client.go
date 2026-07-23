@@ -42,6 +42,7 @@ func (c *Client) Register(info NodeInfo) error {
 		Addrs:    info.Addrs,
 		Region:   info.Region,
 		WantExit: info.WantExit,
+		Load:     info.Load,
 	}, nil)
 }
 
@@ -81,6 +82,7 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 			Addrs:    e.Addrs,
 			Region:   e.Region,
 			WantExit: e.WantExit,
+			Load:     e.Load,
 		})
 		tiers[e.PeerID] = e.Tier
 	}

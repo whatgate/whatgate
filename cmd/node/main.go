@@ -125,7 +125,7 @@ func main() {
 			}
 		}
 
-		registerOnce(coord, selfID, n.AddrStrings(), *region, *asExit)
+		registerOnce(coord, selfID, n.AddrStrings(), *region, *asExit, n.ExitLoad())
 		go keepRegistered(ctx, coord, selfID, n, *region, *asExit)
 
 		if *toRegion != "" {
@@ -133,7 +133,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("%v", err)
 			}
-			ai, err := discoverExit(coord, *toRegion, selfID, scope)
+			ai, err := discoverExit(ctx, n, coord, *toRegion, selfID, scope)
 			if err != nil {
 				log.Fatalf("discover exit: %v", err)
 			}
@@ -179,37 +179,64 @@ func startClient(ctx context.Context, n *node.Node, exit peer.AddrInfo, socksAdd
 	fmt.Printf("SOCKS5 proxy on %s → tunneling to exit %s\n", socksAddr, exit.ID)
 }
 
-// discoverExit queries the directory and picks an exit in the desired region
-// that falls within the user's trust scope.
-func discoverExit(c *coordinator.Client, region, selfID string, scope trust.Scope) (peer.AddrInfo, error) {
+// discoverExit queries the directory and picks the best exit in the desired
+// region within the user's trust scope, ranked by trust, then measured latency,
+// then reported load.
+func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, region, selfID string, scope trust.Scope) (peer.AddrInfo, error) {
 	nodes, tiers, err := c.DirectoryFor(selfID)
 	if err != nil {
 		return peer.AddrInfo{}, err
 	}
-	pick, ok := routing.PickExitScoped(nodes, region, selfID, scope, func(p string) trust.Tier {
-		return tiers[p]
+	tierOf := func(p string) trust.Tier { return tiers[p] }
+
+	// Probe latency to each in-scope candidate; load comes from the directory.
+	load := make(map[string]int, len(nodes))
+	latency := make(map[string]int, len(nodes))
+	for _, nd := range nodes {
+		load[nd.PeerID] = nd.Load
+		if nd.PeerID == selfID || !nd.WantExit || nd.Region != region || !scope.Allows(tiers[nd.PeerID]) {
+			continue
+		}
+		ai, err := node.AddrInfoFromStrings(nd.PeerID, nd.Addrs)
+		if err != nil {
+			continue
+		}
+		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		if rtt, err := n.Ping(pctx, ai); err == nil {
+			latency[nd.PeerID] = int(rtt.Milliseconds())
+		} else {
+			latency[nd.PeerID] = 1 << 30 // unreachable: rank last
+		}
+		cancel()
+	}
+
+	ranked := routing.RankExits(nodes, region, selfID, scope, tierOf, func(p string) routing.Metrics {
+		return routing.Metrics{LatencyMs: latency[p], Load: load[p]}
 	})
-	if !ok {
+	if len(ranked) == 0 {
 		return peer.AddrInfo{}, fmt.Errorf("no exit in region %q within %s trust scope", region, scope)
 	}
-	fmt.Printf("selected exit %s in region %s (trust: %s)\n", pick.PeerID, pick.Region, tiers[pick.PeerID])
-	return node.AddrInfoFromStrings(pick.PeerID, pick.Addrs)
+	best := ranked[0]
+	fmt.Printf("selected exit %s in region %s (trust: %s, latency: %dms, load: %d)\n",
+		best.PeerID, best.Region, tiers[best.PeerID], latency[best.PeerID], load[best.PeerID])
+	return node.AddrInfoFromStrings(best.PeerID, best.Addrs)
 }
 
-func registerOnce(c *coordinator.Client, selfID string, addrs []string, region string, wantExit bool) {
+func registerOnce(c *coordinator.Client, selfID string, addrs []string, region string, wantExit bool, load int) {
 	err := c.Register(coordinator.NodeInfo{
 		PeerID:   selfID,
 		Addrs:    addrs,
 		Region:   region,
 		WantExit: wantExit,
+		Load:     load,
 	})
 	if err != nil {
 		log.Printf("register with coordinator: %v", err)
 	}
 }
 
-// keepRegistered periodically refreshes the node's directory entry so it does
-// not expire, until the context is cancelled.
+// keepRegistered periodically refreshes the node's directory entry (including
+// its current exit load) so it does not expire, until the context is cancelled.
 func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n *node.Node, region string, wantExit bool) {
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
@@ -218,7 +245,7 @@ func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			registerOnce(c, selfID, n.AddrStrings(), region, wantExit)
+			registerOnce(c, selfID, n.AddrStrings(), region, wantExit, n.ExitLoad())
 		}
 	}
 }

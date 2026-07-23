@@ -23,6 +23,7 @@ type registerRequest struct {
 	Addrs    []string `json:"addrs"`
 	Region   string   `json:"region"`
 	WantExit bool     `json:"wantExit"`
+	Load     int      `json:"load"`
 }
 
 type directoryEntry struct {
@@ -30,6 +31,7 @@ type directoryEntry struct {
 	Addrs    []string   `json:"addrs"`
 	Region   string     `json:"region"`
 	WantExit bool       `json:"wantExit"`
+	Load     int        `json:"load"`
 	Tier     trust.Tier `json:"tier"` // trust tier relative to the ?from peer
 }
 
@@ -197,6 +199,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Addrs:    req.Addrs,
 		Region:   req.Region,
 		WantExit: req.WantExit,
+		Load:     req.Load,
 	})
 	w.WriteHeader(http.StatusOK)
 }
@@ -220,6 +223,7 @@ func (s *Server) handleDirectory(w http.ResponseWriter, r *http.Request) {
 			Addrs:    n.Addrs,
 			Region:   n.Region,
 			WantExit: n.WantExit,
+			Load:     n.Load,
 			Tier:     tier,
 		})
 	}
