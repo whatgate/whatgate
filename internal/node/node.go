@@ -196,31 +196,46 @@ func (n *Node) EnableExit(dial tunnel.DialFunc) {
 	n.setExitHandler(dial, nil)
 }
 
-// EnableGuardedExit is EnableExit with an ExitGuard: each request is authorized
-// against guard using the requester's trust tier (from tierOf) before dialing.
-// This is how an exit refuses strangers, blocked destinations, or excess load.
-//
-// report, if non-nil, is called with the outcome of each request (served, or
-// blocked by destination policy) so the coordinator can adjust the requester's
-// reputation. It should not block (fire-and-forget).
-func (n *Node) EnableGuardedExit(dial tunnel.DialFunc, guard *exit.Guard, tierOf func(requesterID string) trust.Tier, report func(requesterID string, outcome trust.Outcome)) {
-	n.setExitHandler(dial, func(requesterID, target string) (func(), error) {
+// GuardedExit configures an exit that authorizes each request through an
+// ExitGuard, using the requester's trust tier and reputation looked up from the
+// coordinator, and optionally reports the outcome back.
+type GuardedExit struct {
+	Dial   tunnel.DialFunc
+	Guard  *exit.Guard
+	TierOf func(requesterID string) trust.Tier // requester's trust tier toward this exit
+	RepOf  func(requesterID string) int        // requester's reputation (nil → 0)
+	// Report, if non-nil, receives each request's outcome (served, or blocked by
+	// destination policy) for coordinator-side reputation. Must not block.
+	Report func(requesterID string, outcome trust.Outcome)
+}
+
+// EnableGuardedExit serves as an exit, authorizing every request through
+// cfg.Guard before dialing — refusing untrusted, low-reputation, blocked, or
+// excess requests.
+func (n *Node) EnableGuardedExit(cfg GuardedExit) {
+	n.setExitHandler(cfg.Dial, func(requesterID, target string) (func(), error) {
 		host, portStr, err := net.SplitHostPort(target)
 		if err != nil {
 			return nil, err
 		}
 		port, _ := strconv.Atoi(portStr)
-		release, err := guard.Authorize(exit.Request{
-			RequesterTier: tierOf(requesterID),
-			Host:          host,
-			Port:          port,
+
+		rep := 0
+		if cfg.RepOf != nil {
+			rep = cfg.RepOf(requesterID)
+		}
+		release, err := cfg.Guard.Authorize(exit.Request{
+			RequesterTier:       cfg.TierOf(requesterID),
+			RequesterReputation: rep,
+			Host:                host,
+			Port:                port,
 		})
-		if report != nil {
+		if cfg.Report != nil {
 			switch {
 			case err == nil:
-				report(requesterID, trust.OutcomeServed)
+				cfg.Report(requesterID, trust.OutcomeServed)
 			case errors.Is(err, exit.ErrBlockedDomain), errors.Is(err, exit.ErrBlockedPort):
-				report(requesterID, trust.OutcomeBlocked)
+				cfg.Report(requesterID, trust.OutcomeBlocked)
 			}
 		}
 		return release, err

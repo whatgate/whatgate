@@ -61,6 +61,7 @@ func main() {
 	blockPorts := flag.String("block-ports", "", "ExitGuard: extra destination ports to block, comma-separated (SMTP ports blocked by default)")
 	blockDomains := flag.String("block-domains", "", "ExitGuard: destination domains to block, comma-separated")
 	maxConns := flag.Int("max-conns", 0, "ExitGuard: max concurrent connections to serve as exit (0 = unlimited)")
+	minReputation := flag.Int("min-reputation", -1_000_000_000, "ExitGuard: refuse requesters whose reputation is below this (default effectively disabled)")
 	tunMode := flag.Bool("tun", false, "route ALL system traffic through the tunnel via a TUN device (needs -tags tun build, admin, and wintun.dll on Windows)")
 	tunDevice := flag.String("tun-device", "whatgate0", "TUN adapter name (TUN mode)")
 	tunMTU := flag.Int("tun-mtu", 1500, "TUN interface MTU (TUN mode)")
@@ -110,7 +111,7 @@ func main() {
 			var d net.Dialer
 			return d.DialContext(ctx, "tcp", addr)
 		}
-		policy, err := buildExitPolicy(*exitScope, *blockPorts, *blockDomains, *maxConns)
+		policy, err := buildExitPolicy(*exitScope, *blockPorts, *blockDomains, *maxConns, *minReputation)
 		if err != nil {
 			log.Fatalf("exit policy: %v", err)
 		}
@@ -125,13 +126,29 @@ func main() {
 			}
 			return t
 		}
+		repOf := func(requesterID string) int {
+			if coord == nil {
+				return 0
+			}
+			s, err := coord.ReputationOf(requesterID)
+			if err != nil {
+				return 0
+			}
+			return s
+		}
 		var report func(requesterID string, outcome trust.Outcome)
 		if coord != nil {
 			report = func(requesterID string, outcome trust.Outcome) {
 				go func() { _ = coord.ReportOutcome(requesterID, outcome) }()
 			}
 		}
-		n.EnableGuardedExit(dial, guard, tierOf, report)
+		n.EnableGuardedExit(node.GuardedExit{
+			Dial:   dial,
+			Guard:  guard,
+			TierOf: tierOf,
+			RepOf:  repOf,
+			Report: report,
+		})
 		fmt.Printf("exit: ENABLED (exit-scope=%s, blocked-ports=%d, blocked-domains=%d, max-conns=%d)\n",
 			policy.Scope, len(policy.BlockedPorts), len(policy.BlockedDomains), policy.MaxConns)
 	}
@@ -305,7 +322,7 @@ func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n
 
 // buildExitPolicy assembles an ExitGuard policy from CLI flags. SMTP ports are
 // always blocked by default; -block-ports adds to them.
-func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns int) (exit.Policy, error) {
+func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns, minReputation int) (exit.Policy, error) {
 	scope, err := trust.ParseScope(scopeStr)
 	if err != nil {
 		return exit.Policy{}, err
@@ -320,7 +337,13 @@ func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns int) (exit.
 	for _, d := range splitCSV(domainsCSV) {
 		domains[d] = true
 	}
-	return exit.Policy{Scope: scope, BlockedPorts: ports, BlockedDomains: domains, MaxConns: maxConns}, nil
+	return exit.Policy{
+		Scope:                  scope,
+		MinRequesterReputation: minReputation,
+		BlockedPorts:           ports,
+		BlockedDomains:         domains,
+		MaxConns:               maxConns,
+	}, nil
 }
 
 func splitCSV(s string) []string {

@@ -15,6 +15,25 @@ func TestAuthorizeRejectsUntrustedRequester(t *testing.T) {
 	}
 }
 
+func TestAuthorizeRejectsLowReputation(t *testing.T) {
+	g := NewGuard(Policy{Scope: trust.ScopeOpen, MinRequesterReputation: 0})
+
+	_, err := g.Authorize(Request{RequesterTier: trust.TierStranger, RequesterReputation: -10, Host: "example.com", Port: 443})
+	if err != ErrLowReputation {
+		t.Fatalf("err = %v, want ErrLowReputation", err)
+	}
+}
+
+func TestAuthorizeAllowsReputationAtThreshold(t *testing.T) {
+	g := NewGuard(Policy{Scope: trust.ScopeOpen, MinRequesterReputation: 0})
+
+	release, err := g.Authorize(Request{RequesterTier: trust.TierStranger, RequesterReputation: 0, Host: "example.com", Port: 443})
+	if err != nil {
+		t.Fatalf("reputation at threshold should be allowed: %v", err)
+	}
+	release()
+}
+
 func TestAuthorizeRejectsBlockedPort(t *testing.T) {
 	g := NewGuard(Policy{Scope: trust.ScopeOpen, BlockedPorts: DefaultBlockedPorts()})
 

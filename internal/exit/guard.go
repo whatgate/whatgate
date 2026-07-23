@@ -16,6 +16,7 @@ import (
 // Guard decisions.
 var (
 	ErrUntrustedRequester = errors.New("exit: requester outside trust scope")
+	ErrLowReputation      = errors.New("exit: requester reputation below threshold")
 	ErrBlockedPort        = errors.New("exit: destination port blocked by policy")
 	ErrBlockedDomain      = errors.New("exit: destination domain blocked by policy")
 	ErrTooManyConns       = errors.New("exit: connection limit reached")
@@ -33,17 +34,19 @@ func DefaultBlockedPorts() map[int]bool {
 
 // Policy is an exit operator's ExitGuard configuration.
 type Policy struct {
-	Scope          trust.Scope     // only serve requesters within this trust scope
-	BlockedPorts   map[int]bool    // destination ports to refuse
-	BlockedDomains map[string]bool // destination hosts to refuse
-	MaxConns       int             // max concurrent served connections (0 = unlimited)
+	Scope                  trust.Scope     // only serve requesters within this trust scope
+	MinRequesterReputation int             // refuse requesters with reputation below this
+	BlockedPorts           map[int]bool    // destination ports to refuse
+	BlockedDomains         map[string]bool // destination hosts to refuse
+	MaxConns               int             // max concurrent served connections (0 = unlimited)
 }
 
 // Request describes one exit attempt to authorize.
 type Request struct {
-	RequesterTier trust.Tier
-	Host          string
-	Port          int
+	RequesterTier       trust.Tier
+	RequesterReputation int
+	Host                string
+	Port                int
 }
 
 // Guard enforces a Policy and tracks concurrency.
@@ -64,6 +67,9 @@ func NewGuard(p Policy) *Guard {
 func (g *Guard) Authorize(req Request) (release func(), err error) {
 	if !g.policy.Scope.Allows(req.RequesterTier) {
 		return nil, ErrUntrustedRequester
+	}
+	if req.RequesterReputation < g.policy.MinRequesterReputation {
+		return nil, ErrLowReputation
 	}
 	if g.policy.BlockedPorts[req.Port] {
 		return nil, ErrBlockedPort
