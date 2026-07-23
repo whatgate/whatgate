@@ -35,6 +35,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
+	"github.com/whatgate/whatgate/internal/audit"
 	"github.com/whatgate/whatgate/internal/coordinator"
 	"github.com/whatgate/whatgate/internal/exit"
 	"github.com/whatgate/whatgate/internal/node"
@@ -62,6 +63,7 @@ func main() {
 	blockDomains := flag.String("block-domains", "", "ExitGuard: destination domains to block, comma-separated")
 	maxConns := flag.Int("max-conns", 0, "ExitGuard: max concurrent connections to serve as exit (0 = unlimited)")
 	minReputation := flag.Int("min-reputation", -1_000_000_000, "ExitGuard: refuse requesters whose reputation is below this (default effectively disabled)")
+	auditLog := flag.String("audit-log", "", "ExitGuard: append a JSON-lines record of served/denied requests to this file (accountability)")
 	tunMode := flag.Bool("tun", false, "route ALL system traffic through the tunnel via a TUN device (needs -tags tun build, admin, and wintun.dll on Windows)")
 	tunDevice := flag.String("tun-device", "whatgate0", "TUN adapter name (TUN mode)")
 	tunMTU := flag.Int("tun-mtu", 1500, "TUN interface MTU (TUN mode)")
@@ -142,12 +144,25 @@ func main() {
 				go func() { _ = coord.ReportOutcome(requesterID, outcome) }()
 			}
 		}
+		var auditFn func(requesterID, target, outcome string)
+		if *auditLog != "" {
+			al, err := audit.NewFileLogger(*auditLog)
+			if err != nil {
+				log.Fatalf("audit log: %v", err)
+			}
+			defer al.Close()
+			auditFn = func(requesterID, target, outcome string) {
+				_ = al.Log(audit.Entry{Time: time.Now(), Requester: requesterID, Target: target, Outcome: outcome})
+			}
+			fmt.Printf("audit log: %s\n", *auditLog)
+		}
 		n.EnableGuardedExit(node.GuardedExit{
 			Dial:   dial,
 			Guard:  guard,
 			TierOf: tierOf,
 			RepOf:  repOf,
 			Report: report,
+			Audit:  auditFn,
 		})
 		fmt.Printf("exit: ENABLED (exit-scope=%s, blocked-ports=%d, blocked-domains=%d, max-conns=%d)\n",
 			policy.Scope, len(policy.BlockedPorts), len(policy.BlockedDomains), policy.MaxConns)

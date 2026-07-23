@@ -207,6 +207,9 @@ type GuardedExit struct {
 	// Report, if non-nil, receives each request's outcome (served, or blocked by
 	// destination policy) for coordinator-side reputation. Must not block.
 	Report func(requesterID string, outcome trust.Outcome)
+	// Audit, if non-nil, records each request (served or denied) for local
+	// accountability. outcome is "served" or "denied: <reason>".
+	Audit func(requesterID, target, outcome string)
 }
 
 // EnableGuardedExit serves as an exit, authorizing every request through
@@ -237,6 +240,13 @@ func (n *Node) EnableGuardedExit(cfg GuardedExit) {
 			case errors.Is(err, exit.ErrBlockedDomain), errors.Is(err, exit.ErrBlockedPort):
 				cfg.Report(requesterID, trust.OutcomeBlocked)
 			}
+		}
+		if cfg.Audit != nil {
+			outcome := "served"
+			if err != nil {
+				outcome = "denied: " + err.Error()
+			}
+			cfg.Audit(requesterID, target, outcome)
 		}
 		return release, err
 	})
