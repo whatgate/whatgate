@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+
+	"github.com/whatgate/whatgate/internal/trust"
 )
 
 // Client is a node's HTTP client for the coordinator control plane: it admits
@@ -44,20 +47,34 @@ func (c *Client) Register(info NodeInfo) error {
 
 // Directory fetches the current live node directory.
 func (c *Client) Directory() ([]NodeInfo, error) {
-	resp, err := c.http.Get(c.baseURL + "/directory")
+	nodes, _, err := c.DirectoryFor("")
+	return nodes, err
+}
+
+// DirectoryFor fetches the directory annotated with each node's trust tier
+// relative to the given peer (from). The returned map is keyed by peer ID; use
+// it as the tierOf lookup for trust-scoped exit selection. Pass from="" to skip
+// annotation (all tiers default to stranger).
+func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, error) {
+	u := c.baseURL + "/directory"
+	if from != "" {
+		u += "?from=" + url.QueryEscape(from)
+	}
+	resp, err := c.http.Get(u)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, statusError("GET /directory", resp)
+		return nil, nil, statusError("GET /directory", resp)
 	}
 
 	var entries []directoryEntry
 	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	nodes := make([]NodeInfo, 0, len(entries))
+	tiers := make(map[string]trust.Tier, len(entries))
 	for _, e := range entries {
 		nodes = append(nodes, NodeInfo{
 			PeerID:   e.PeerID,
@@ -65,8 +82,24 @@ func (c *Client) Directory() ([]NodeInfo, error) {
 			Region:   e.Region,
 			WantExit: e.WantExit,
 		})
+		tiers[e.PeerID] = e.Tier
 	}
-	return nodes, nil
+	return nodes, tiers, nil
+}
+
+// CreateGroup creates a group (小网) with peerID as founder.
+func (c *Client) CreateGroup(groupID, peerID string) error {
+	return c.postJSON("/group/create", groupMemberRequest{GroupID: groupID, PeerID: peerID}, nil)
+}
+
+// JoinGroup adds peerID to a group.
+func (c *Client) JoinGroup(groupID, peerID string) error {
+	return c.postJSON("/group/join", groupMemberRequest{GroupID: groupID, PeerID: peerID}, nil)
+}
+
+// EndorseGroup records that fromGroup vouches for toGroup.
+func (c *Client) EndorseGroup(fromGroup, toGroup string) error {
+	return c.postJSON("/group/endorse", endorseRequest{FromGroup: fromGroup, ToGroup: toGroup}, nil)
 }
 
 // ErrNoRelay is returned by Relay when the coordinator advertises none.

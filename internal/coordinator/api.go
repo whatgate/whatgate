@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/whatgate/whatgate/internal/trust"
 )
 
 // Wire types for the coordinator HTTP/JSON API.
@@ -24,10 +26,21 @@ type registerRequest struct {
 }
 
 type directoryEntry struct {
-	PeerID   string   `json:"peerID"`
-	Addrs    []string `json:"addrs"`
-	Region   string   `json:"region"`
-	WantExit bool     `json:"wantExit"`
+	PeerID   string     `json:"peerID"`
+	Addrs    []string   `json:"addrs"`
+	Region   string     `json:"region"`
+	WantExit bool       `json:"wantExit"`
+	Tier     trust.Tier `json:"tier"` // trust tier relative to the ?from peer
+}
+
+type groupMemberRequest struct {
+	GroupID string `json:"groupID"`
+	PeerID  string `json:"peerID"`
+}
+
+type endorseRequest struct {
+	FromGroup string `json:"fromGroup"`
+	ToGroup   string `json:"toGroup"`
 }
 
 // RelayInfo advertises the coordinator's co-located Circuit Relay so nodes can
@@ -43,6 +56,7 @@ type RelayInfo struct {
 type Server struct {
 	dir     *Directory
 	invites *InviteStore
+	graph   *trust.Graph
 	relay   *RelayInfo // optional co-located relay
 }
 
@@ -54,8 +68,11 @@ func (s *Server) SetRelayInfo(peerID string, addrs []string) {
 // NewServer builds a coordinator HTTP server over the given directory and
 // invite store.
 func NewServer(dir *Directory, invites *InviteStore) *Server {
-	return &Server{dir: dir, invites: invites}
+	return &Server{dir: dir, invites: invites, graph: trust.NewGraph()}
 }
+
+// Graph exposes the coordinator's trust graph (authoritative store).
+func (s *Server) Graph() *trust.Graph { return s.graph }
 
 // Handler returns the HTTP handler exposing the coordinator API.
 func (s *Server) Handler() http.Handler {
@@ -64,7 +81,58 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/register", s.handleRegister)
 	mux.HandleFunc("/directory", s.handleDirectory)
 	mux.HandleFunc("/relay", s.handleRelay)
+	mux.HandleFunc("/group/create", s.handleGroupCreate)
+	mux.HandleFunc("/group/join", s.handleGroupJoin)
+	mux.HandleFunc("/group/endorse", s.handleGroupEndorse)
 	return mux
+}
+
+// handleGroupCreate creates a group (小网) with the given founder.
+func (s *Server) handleGroupCreate(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeGroupMember(w, r)
+	if !ok {
+		return
+	}
+	s.graph.CreateGroup(req.GroupID, req.PeerID)
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleGroupJoin adds a peer to a group.
+func (s *Server) handleGroupJoin(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeGroupMember(w, r)
+	if !ok {
+		return
+	}
+	s.graph.AddMember(req.GroupID, req.PeerID)
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleGroupEndorse records that one group vouches for another.
+func (s *Server) handleGroupEndorse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req endorseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	s.graph.Endorse(req.FromGroup, req.ToGroup)
+	w.WriteHeader(http.StatusOK)
+}
+
+func decodeGroupMember(w http.ResponseWriter, r *http.Request) (groupMemberRequest, bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return groupMemberRequest{}, false
+	}
+	var req groupMemberRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return groupMemberRequest{}, false
+	}
+	return req, true
 }
 
 // handleRelay returns the co-located relay's addressing, or 404 if none.
@@ -139,14 +207,20 @@ func (s *Server) handleDirectory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	from := r.URL.Query().Get("from")
 	nodes := s.dir.List()
 	entries := make([]directoryEntry, 0, len(nodes))
 	for _, n := range nodes {
+		tier := trust.TierStranger
+		if from != "" {
+			tier = s.graph.Trust(from, n.PeerID)
+		}
 		entries = append(entries, directoryEntry{
 			PeerID:   n.PeerID,
 			Addrs:    n.Addrs,
 			Region:   n.Region,
 			WantExit: n.WantExit,
+			Tier:     tier,
 		})
 	}
 	writeJSON(w, http.StatusOK, entries)

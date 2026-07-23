@@ -27,6 +27,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,6 +38,7 @@ import (
 	"github.com/whatgate/whatgate/internal/node"
 	"github.com/whatgate/whatgate/internal/proxy"
 	"github.com/whatgate/whatgate/internal/routing"
+	"github.com/whatgate/whatgate/internal/trust"
 )
 
 func main() {
@@ -48,6 +50,9 @@ func main() {
 	invite := flag.String("invite", "", "invite code to redeem when joining via coordinator")
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
 	toRegion := flag.String("to", "", "desired exit region to discover via coordinator (client mode)")
+	group := flag.String("group", "", "join (or create) this small-network group id")
+	endorse := flag.String("endorse", "", "endorse fromGroup:toGroup (your group vouches for another)")
+	trustScope := flag.String("trust-scope", "", "trust range for exit selection: conservative|open (required with -to; no default by design)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -101,11 +106,34 @@ func main() {
 			fmt.Printf("joined network (vouched by %s)\n", issuer)
 		}
 
+		if *group != "" {
+			if err := coord.JoinGroup(*group, selfID); err != nil {
+				log.Printf("join group %s: %v", *group, err)
+			} else {
+				fmt.Printf("joined small-network group %s\n", *group)
+			}
+		}
+		if *endorse != "" {
+			if from, to, ok := strings.Cut(*endorse, ":"); ok {
+				if err := coord.EndorseGroup(from, to); err != nil {
+					log.Printf("endorse %s->%s: %v", from, to, err)
+				} else {
+					fmt.Printf("endorsed group %s -> %s\n", from, to)
+				}
+			} else {
+				log.Printf("bad -endorse %q; want fromGroup:toGroup", *endorse)
+			}
+		}
+
 		registerOnce(coord, selfID, n.AddrStrings(), *region, *asExit)
 		go keepRegistered(ctx, coord, selfID, n, *region, *asExit)
 
 		if *toRegion != "" {
-			ai, err := discoverExit(coord, *toRegion, selfID)
+			scope, err := trust.ParseScope(*trustScope)
+			if err != nil {
+				log.Fatalf("%v", err)
+			}
+			ai, err := discoverExit(coord, *toRegion, selfID, scope)
 			if err != nil {
 				log.Fatalf("discover exit: %v", err)
 			}
@@ -151,17 +179,20 @@ func startClient(ctx context.Context, n *node.Node, exit peer.AddrInfo, socksAdd
 	fmt.Printf("SOCKS5 proxy on %s → tunneling to exit %s\n", socksAddr, exit.ID)
 }
 
-// discoverExit queries the directory and picks an exit in the desired region.
-func discoverExit(c *coordinator.Client, region, selfID string) (peer.AddrInfo, error) {
-	nodes, err := c.Directory()
+// discoverExit queries the directory and picks an exit in the desired region
+// that falls within the user's trust scope.
+func discoverExit(c *coordinator.Client, region, selfID string, scope trust.Scope) (peer.AddrInfo, error) {
+	nodes, tiers, err := c.DirectoryFor(selfID)
 	if err != nil {
 		return peer.AddrInfo{}, err
 	}
-	pick, ok := routing.PickExit(nodes, region, selfID)
+	pick, ok := routing.PickExitScoped(nodes, region, selfID, scope, func(p string) trust.Tier {
+		return tiers[p]
+	})
 	if !ok {
-		return peer.AddrInfo{}, fmt.Errorf("no exit available in region %q", region)
+		return peer.AddrInfo{}, fmt.Errorf("no exit in region %q within %s trust scope", region, scope)
 	}
-	fmt.Printf("selected exit %s in region %s\n", pick.PeerID, pick.Region)
+	fmt.Printf("selected exit %s in region %s (trust: %s)\n", pick.PeerID, pick.Region, tiers[pick.PeerID])
 	return node.AddrInfoFromStrings(pick.PeerID, pick.Addrs)
 }
 
