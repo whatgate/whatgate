@@ -125,6 +125,9 @@ pwsh scripts/e2e-trust-scope.ps1
 
 # ExitGuard 四场景：拒陌生 / 放同组 / 域名黑名单命中拒 / 未命中放
 pwsh scripts/e2e-exit-guard.ps1
+
+# 声誉闭环：滥用被扣分 -> 连允许域名也被拒；全新节点畅通（对照）
+pwsh scripts/e2e-reputation.ps1
 ```
 
 脚本会在开头杀掉遗留的 `node`/`coordinator` 进程，并用回环端口跑完整流程，最后打印 `OVERALL: SUCCESS`。需先 `go build -o bin/ ./...`。
