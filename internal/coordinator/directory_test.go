@@ -8,7 +8,7 @@ import (
 // clock is a mutable time source for exercising expiry.
 type clock struct{ t time.Time }
 
-func (c *clock) now() time.Time  { return c.t }
+func (c *clock) now() time.Time          { return c.t }
 func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 func TestRegisterThenListReturnsEntry(t *testing.T) {

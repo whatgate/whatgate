@@ -35,11 +35,48 @@ func New(ctx context.Context, listenAddrs ...string) (*Node, error) {
 	if len(listenAddrs) == 0 {
 		listenAddrs = []string{"/ip4/0.0.0.0/tcp/0"}
 	}
-	h, err := libp2p.New(libp2p.ListenAddrStrings(listenAddrs...))
+	// NAT traversal for the P2P data plane: map ports where possible, offer an
+	// AutoNAT service to peers, and hole-punch through NATs (DCUtR). When direct
+	// connectivity fails, a Circuit Relay fallback is layered on in later work.
+	h, err := libp2p.New(
+		libp2p.ListenAddrStrings(listenAddrs...),
+		libp2p.NATPortMap(),
+		libp2p.EnableNATService(),
+		libp2p.EnableHolePunching(),
+	)
 	if err != nil {
 		return nil, err
 	}
 	return &Node{h: h}, nil
+}
+
+// AddrStrings returns the node's listen multiaddrs as strings, for advertising
+// to the coordinator directory.
+func (n *Node) AddrStrings() []string {
+	addrs := n.h.Addrs()
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, a.String())
+	}
+	return out
+}
+
+// AddrInfoFromStrings builds a peer.AddrInfo from a peer ID and multiaddr
+// strings, e.g. a directory entry, for use with Connect.
+func AddrInfoFromStrings(peerID string, addrs []string) (peer.AddrInfo, error) {
+	id, err := peer.Decode(peerID)
+	if err != nil {
+		return peer.AddrInfo{}, err
+	}
+	mas := make([]multiaddr.Multiaddr, 0, len(addrs))
+	for _, a := range addrs {
+		m, err := multiaddr.NewMultiaddr(a)
+		if err != nil {
+			return peer.AddrInfo{}, err
+		}
+		mas = append(mas, m)
+	}
+	return peer.AddrInfo{ID: id, Addrs: mas}, nil
 }
 
 // ID returns this node's libp2p peer ID.
