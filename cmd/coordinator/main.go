@@ -31,6 +31,8 @@ func main() {
 	ttl := flag.Duration("ttl", 60*time.Second, "directory entry time-to-live")
 	relayListen := flag.String("relay-listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr for the co-located relay (empty to disable)")
 	statePath := flag.String("state", "", "path to a JSON state file for durable admissions/groups/reputation (empty = in-memory only)")
+	repDecay := flag.Int("reputation-decay", 1, "reputation points to decay toward zero each interval (0 = disabled)")
+	repDecayInterval := flag.Duration("reputation-decay-interval", time.Hour, "how often to apply reputation decay")
 	flag.Parse()
 
 	dir := coordinator.NewDirectory(*ttl, nil)
@@ -68,6 +70,18 @@ func main() {
 		for _, a := range addrs {
 			fmt.Printf("  relay addr: %s/p2p/%s\n", a, rl.ID())
 		}
+	}
+
+	// Periodically decay reputation so punishments fade and scores don't linger.
+	if *repDecay > 0 && *repDecayInterval > 0 {
+		go func() {
+			t := time.NewTicker(*repDecayInterval)
+			defer t.Stop()
+			for range t.C {
+				srv.DecayReputation(*repDecay)
+			}
+		}()
+		fmt.Printf("reputation decay: %d per %s\n", *repDecay, *repDecayInterval)
 	}
 
 	fmt.Printf("WhatGate coordinator listening on %s\n", *addr)

@@ -117,6 +117,13 @@ func NewServer(dir *Directory, invites *InviteStore) *Server {
 // Reputation exposes the coordinator's reputation store.
 func (s *Server) Reputation() *trust.Reputation { return s.rep }
 
+// DecayReputation decays all reputation scores toward zero by step and persists.
+// Run periodically so punishments fade and stale scores don't linger forever.
+func (s *Server) DecayReputation(step int) {
+	s.rep.Decay(step)
+	s.save()
+}
+
 // SetStatePath enables durable persistence: after each state-changing request,
 // the full snapshot is written to path (atomically).
 func (s *Server) SetStatePath(path string) { s.statePath = path }

@@ -48,6 +48,40 @@ func (r *Reputation) GroupScore(groupID string) int {
 	return r.group[groupID]
 }
 
+// Decay moves every score toward zero by up to step (never overshooting), and
+// drops entries that reach zero. Run periodically so punishments fade and stale
+// high scores don't persist forever.
+func (r *Reputation) Decay(step int) {
+	if step <= 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	decayToward0(r.peer, step)
+	decayToward0(r.group, step)
+}
+
+func decayToward0(m map[string]int, step int) {
+	for k, v := range m {
+		switch {
+		case v > 0:
+			if v -= step; v <= 0 {
+				delete(m, k)
+			} else {
+				m[k] = v
+			}
+		case v < 0:
+			if v += step; v >= 0 {
+				delete(m, k)
+			} else {
+				m[k] = v
+			}
+		default:
+			delete(m, k)
+		}
+	}
+}
+
 // Export returns the peer and group reputation maps, for persistence.
 func (r *Reputation) Export() (peer map[string]int, group map[string]int) {
 	r.mu.RLock()
