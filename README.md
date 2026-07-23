@@ -86,6 +86,8 @@ node -coordinator http://host:8080 -invite welcome -exit -region JP \
 go test ./...
 ```
 
+完整测试指南（单元测试 + 多进程端到端出网 + 信任范围/出口保护/TUN 验证 + 一键脚本）见 **[docs/testing.md](docs/testing.md)**。
+
 ## 目录结构
 
 ```
