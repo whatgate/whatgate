@@ -24,17 +24,28 @@ type Status struct {
 	TrustScope    string `json:"trustScope"`    // client trust scope
 	ConnectedExit string `json:"connectedExit"` // exit peer ID the client tunnels through
 	SocksAddr     string `json:"socksAddr"`     // local SOCKS listen address (client)
+	CanSwitch     bool   `json:"canSwitch"`     // whether runtime region switching is available
 	Uptime        string `json:"uptime"`
+}
+
+// Controls are runtime actions the dashboard can trigger. Nil callbacks are
+// treated as unsupported.
+type Controls struct {
+	// SwitchRegion re-selects an exit in the given region and re-points the local
+	// SOCKS proxy at it, returning the new exit's peer ID.
+	SwitchRegion func(region string) (newExitID string, err error)
 }
 
 // Server serves the dashboard over HTTP.
 type Server struct {
-	status func() Status
+	status   func() Status
+	controls Controls
 }
 
-// NewServer creates a dashboard server backed by a live status provider.
-func NewServer(status func() Status) *Server {
-	return &Server{status: status}
+// NewServer creates a dashboard server backed by a live status provider and
+// optional runtime controls.
+func NewServer(status func() Status, controls Controls) *Server {
+	return &Server{status: status, controls: controls}
 }
 
 // Handler returns the HTTP handler for the dashboard.
@@ -43,6 +54,30 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.status())
+	})
+	mux.HandleFunc("/api/switch", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if s.controls.SwitchRegion == nil {
+			http.Error(w, "region switching not available on this node", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Region string `json:"region"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		exitID, err := s.controls.SwitchRegion(req.Region)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"exit": exitID})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -99,7 +100,17 @@ func main() {
 	}
 	defer n.Close()
 	selfID := n.ID().String()
-	var connectedExit string // exit peer ID this client tunnels through (for the dashboard)
+
+	// Live client state for the dashboard (updated on connect / region switch).
+	var (
+		stMu     sync.Mutex
+		stExit   string
+		stRegion = *toRegion
+	)
+	setState := func(exit, region string) { stMu.Lock(); stExit, stRegion = exit, region; stMu.Unlock() }
+	getState := func() (string, string) { stMu.Lock(); defer stMu.Unlock(); return stExit, stRegion }
+	// switchTo, when non-nil, re-selects an exit in a region at runtime.
+	var switchTo func(region string) (string, error)
 
 	// Sign identity-proving requests (join/register) with the node's key.
 	if coord != nil {
@@ -250,8 +261,26 @@ func main() {
 			if err != nil {
 				log.Fatalf("discover exit: %v", err)
 			}
-			connectedExit = ai.ID.String()
-			startClient(ctx, n, ai, *socksAddr)
+			// A switchable dialer lets the dashboard re-point the SOCKS proxy at a
+			// different exit/region at runtime.
+			sw := &proxy.SwitchableDialer{}
+			sw.Set(n.NewClientDialer(ai.ID))
+			setState(ai.ID.String(), *toRegion)
+			startClient(ctx, n, ai, *socksAddr, sw)
+
+			switchTo = func(region string) (string, error) {
+				next, err := discoverExit(ctx, n, coord, region, selfID, scope)
+				if err != nil {
+					return "", err
+				}
+				if err := n.Connect(ctx, next); err != nil {
+					return "", err
+				}
+				sw.Set(n.NewClientDialer(next.ID))
+				setState(next.ID.String(), region)
+				fmt.Printf("switched exit to %s in region %s\n", next.ID, region)
+				return next.ID.String(), nil
+			}
 		}
 	}
 
@@ -261,8 +290,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("parse -connect: %v", err)
 		}
-		connectedExit = ai.ID.String()
-		startClient(ctx, n, ai, *socksAddr)
+		setState(ai.ID.String(), "")
+		startClient(ctx, n, ai, *socksAddr, n.NewClientDialer(ai.ID))
 	}
 
 	// TUN mode: route the whole system's traffic through the local SOCKS proxy
@@ -296,6 +325,7 @@ func main() {
 		}
 		started := time.Now()
 		statusFn := func() webui.Status {
+			curExit, curRegion := getState()
 			return webui.Status{
 				PeerID:        selfID,
 				Role:          role,
@@ -303,10 +333,11 @@ func main() {
 				ExitEnabled:   *asExit,
 				ExitRegion:    *region,
 				ExitLoad:      n.ExitLoad(),
-				ToRegion:      *toRegion,
+				ToRegion:      curRegion,
 				TrustScope:    *trustScope,
-				ConnectedExit: connectedExit,
+				ConnectedExit: curExit,
 				SocksAddr:     socks,
+				CanSwitch:     switchTo != nil,
 				Uptime:        time.Since(started).Round(time.Second).String(),
 			}
 		}
@@ -314,7 +345,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("web console: %v", err)
 		}
-		go func() { _ = http.Serve(l, webui.NewServer(statusFn).Handler()) }()
+		webSrv := webui.NewServer(statusFn, webui.Controls{SwitchRegion: switchTo})
+		go func() { _ = http.Serve(l, webSrv.Handler()) }()
 		go func() { <-ctx.Done(); _ = l.Close() }()
 		fmt.Printf("web console: http://%s\n", *webAddr)
 	}
@@ -324,14 +356,15 @@ func main() {
 	fmt.Println("shutting down")
 }
 
-// startClient connects to the exit and serves a local SOCKS5 proxy tunneling to it.
-func startClient(ctx context.Context, n *node.Node, exit peer.AddrInfo, socksAddr string) {
+// startClient connects to the exit and serves a local SOCKS5 proxy that tunnels
+// through dialer (which may be a SwitchableDialer for runtime exit switching).
+func startClient(ctx context.Context, n *node.Node, exit peer.AddrInfo, socksAddr string, dialer proxy.Dialer) {
 	if err := n.Connect(ctx, exit); err != nil {
 		log.Fatalf("connect to exit %s: %v", exit.ID, err)
 	}
 	fmt.Printf("connected to exit %s\n", exit.ID)
 
-	srv := &proxy.Server{Dialer: n.NewClientDialer(exit.ID)}
+	srv := &proxy.Server{Dialer: dialer}
 	l, err := net.Listen("tcp", socksAddr)
 	if err != nil {
 		log.Fatalf("listen socks: %v", err)

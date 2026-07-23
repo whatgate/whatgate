@@ -12,7 +12,7 @@ import (
 func TestStatusEndpointReturnsProviderState(t *testing.T) {
 	srv := NewServer(func() Status {
 		return Status{PeerID: "12D3KooExample", Role: "client+exit", ExitEnabled: true, ExitLoad: 3, ToRegion: "JP"}
-	})
+	}, Controls{})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -32,7 +32,7 @@ func TestStatusEndpointReturnsProviderState(t *testing.T) {
 }
 
 func TestDashboardServesHTML(t *testing.T) {
-	srv := NewServer(func() Status { return Status{} })
+	srv := NewServer(func() Status { return Status{} }, Controls{})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -53,8 +53,51 @@ func TestDashboardServesHTML(t *testing.T) {
 	}
 }
 
+func TestSwitchEndpointInvokesControl(t *testing.T) {
+	var gotRegion string
+	srv := NewServer(func() Status { return Status{} }, Controls{
+		SwitchRegion: func(region string) (string, error) {
+			gotRegion = region
+			return "newExitID", nil
+		},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/switch", "application/json", strings.NewReader(`{"region":"US"}`))
+	if err != nil {
+		t.Fatalf("POST /api/switch: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if gotRegion != "US" {
+		t.Fatalf("switched region = %q, want US", gotRegion)
+	}
+	if !strings.Contains(string(body), "newExitID") {
+		t.Fatalf("response = %s", body)
+	}
+}
+
+func TestSwitchUnavailableIsBadRequest(t *testing.T) {
+	srv := NewServer(func() Status { return Status{} }, Controls{}) // no SwitchRegion
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/switch", "application/json", strings.NewReader(`{"region":"US"}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestUnknownPathIs404(t *testing.T) {
-	srv := NewServer(func() Status { return Status{} })
+	srv := NewServer(func() Status { return Status{} }, Controls{})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

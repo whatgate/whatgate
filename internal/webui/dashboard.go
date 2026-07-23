@@ -27,6 +27,10 @@ const dashboardHTML = `<!doctype html>
   .offp { background:color-mix(in srgb, var(--off) 22%, transparent); color:var(--off); }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 20%,transparent); }
   .foot { color:var(--muted); font-size:12px; margin-top:16px; text-align:center; }
+  input, button { font:inherit; }
+  input { padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); width:120px; }
+  button { padding:6px 14px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+  .msg { color:var(--muted); font-size:12px; padding:0 0 12px; }
 </style>
 </head>
 <body>
@@ -36,6 +40,7 @@ const dashboardHTML = `<!doctype html>
   <div class="card" id="card">
     <div class="row"><span class="k">加载中…</span><span class="v"></span></div>
   </div>
+  <div id="ctrl" style="margin-top:16px"></div>
   <div class="foot" id="foot"></div>
 </div>
 <script>
@@ -60,10 +65,34 @@ async function tick(){
     const s = await (await fetch('api/status',{cache:'no-store'})).json();
     document.getElementById('card').innerHTML = rows.map(([k,f]) =>
       '<div class="row"><span class="k">'+esc(k)+'</span><span class="v">'+f(s)+'</span></div>').join('');
+    renderCtrl(s);
     document.getElementById('foot').textContent = '更新于 ' + new Date().toLocaleTimeString();
   } catch(e) {
     document.getElementById('foot').textContent = '无法获取状态：' + e;
   }
+}
+function renderCtrl(s){
+  const ctrl = document.getElementById('ctrl');
+  if (!s.canSwitch) { ctrl.innerHTML = ''; ctrl.dataset.init = ''; return; }
+  if (ctrl.dataset.init) return;
+  ctrl.innerHTML = '<div class="card"><div class="row"><span class="k">切换出口地区</span>'
+    + '<span class="v"><input id="rg" placeholder="如 JP"> <button id="sw">切换</button></span></div>'
+    + '<div class="msg" id="swmsg"></div></div>';
+  ctrl.dataset.init = '1';
+  document.getElementById('sw').onclick = doSwitch;
+}
+async function doSwitch(){
+  const r = document.getElementById('rg').value.trim();
+  const msg = document.getElementById('swmsg');
+  if (!r) { msg.textContent = '请输入地区'; return; }
+  msg.textContent = '切换中…';
+  try {
+    const resp = await fetch('api/switch', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({region:r})});
+    if (!resp.ok) { msg.textContent = '失败：' + esc(await resp.text()); return; }
+    const j = await resp.json();
+    msg.textContent = '已切换到出口 ' + esc(j.exit);
+    tick();
+  } catch(e) { msg.textContent = '错误：' + e; }
 }
 tick(); setInterval(tick, 2000);
 </script>
