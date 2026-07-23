@@ -96,6 +96,27 @@ func TestSwitchUnavailableIsBadRequest(t *testing.T) {
 	}
 }
 
+func TestExitToggleInvokesControl(t *testing.T) {
+	var got, called bool
+	srv := NewServer(func() Status { return Status{} }, Controls{
+		ToggleExit: func(enabled bool) error { got, called = enabled, true; return nil },
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/exit", "application/json", strings.NewReader(`{"enabled":true}`))
+	if err != nil {
+		t.Fatalf("POST /api/exit: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !called || !got {
+		t.Fatalf("ToggleExit not invoked with true (called=%v got=%v)", called, got)
+	}
+}
+
 func TestUnknownPathIs404(t *testing.T) {
 	srv := NewServer(func() Status { return Status{} }, Controls{})
 	ts := httptest.NewServer(srv.Handler())

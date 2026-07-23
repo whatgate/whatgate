@@ -123,10 +123,14 @@ func main() {
 		fmt.Printf("  %s/p2p/%s\n", a, selfID)
 	}
 
-	if *asExit {
-		// Becoming an exit is opt-in (this flag is the consent). ExitGuard then
-		// protects the operator: it only serves requesters within exit-scope and
-		// refuses blocked destinations / excess load.
+	// Build the exit configuration unconditionally so serving as an exit can be
+	// toggled on/off at runtime (via the dashboard). It stays off until -exit or a
+	// toggle. ExitGuard protects the operator whenever it is on.
+	var (
+		setExit  func(on bool)
+		isExitOn func() bool
+	)
+	{
 		dial := func(ctx context.Context, addr string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "tcp", addr)
@@ -208,16 +212,35 @@ func main() {
 			}
 			fmt.Printf("audit log: %s\n", *auditLog)
 		}
-		n.EnableGuardedExit(node.GuardedExit{
+		exitCfg := node.GuardedExit{
 			Dial:   dial,
 			Guard:  guard,
 			TierOf: tierOf,
 			RepOf:  repOf,
 			Report: report,
 			Audit:  auditFn,
-		})
-		fmt.Printf("exit: ENABLED (exit-scope=%s, blocked-ports=%d, blocked-domains=%d, max-conns=%d)\n",
-			policy.Scope, len(policy.BlockedPorts), len(policy.BlockedDomains), policy.MaxConns)
+		}
+		var (
+			exitMu sync.Mutex
+			exitOn bool
+		)
+		setExit = func(on bool) {
+			exitMu.Lock()
+			defer exitMu.Unlock()
+			if on {
+				n.EnableGuardedExit(exitCfg)
+			} else {
+				n.DisableExit()
+			}
+			exitOn = on
+		}
+		isExitOn = func() bool { exitMu.Lock(); defer exitMu.Unlock(); return exitOn }
+
+		setExit(*asExit)
+		if *asExit {
+			fmt.Printf("exit: ENABLED (exit-scope=%s, blocked-ports=%d, blocked-domains=%d, max-conns=%d)\n",
+				policy.Scope, len(policy.BlockedPorts), len(policy.BlockedDomains), policy.MaxConns)
+		}
 	}
 
 	// Coordinator-based flow: join, register presence, discover exits.
@@ -249,8 +272,8 @@ func main() {
 			}
 		}
 
-		registerOnce(coord, selfID, n.AddrStrings(), *region, *asExit, n.ExitLoad())
-		go keepRegistered(ctx, coord, selfID, n, *region, *asExit)
+		registerOnce(coord, selfID, n.AddrStrings(), *region, isExitOn(), n.ExitLoad())
+		go keepRegistered(ctx, coord, selfID, n, *region, isExitOn)
 
 		if *toRegion != "" {
 			scope, err := trust.ParseScope(*trustScope)
@@ -310,15 +333,6 @@ func main() {
 	// Local status dashboard.
 	if *webAddr != "" {
 		isClient := *toRegion != "" || *connect != ""
-		role := "idle"
-		switch {
-		case *asExit && isClient:
-			role = "client+exit"
-		case *asExit:
-			role = "exit"
-		case isClient:
-			role = "client"
-		}
 		socks := ""
 		if isClient {
 			socks = *socksAddr
@@ -326,11 +340,21 @@ func main() {
 		started := time.Now()
 		statusFn := func() webui.Status {
 			curExit, curRegion := getState()
+			exitOn := isExitOn()
+			role := "idle"
+			switch {
+			case exitOn && isClient:
+				role = "client+exit"
+			case exitOn:
+				role = "exit"
+			case isClient:
+				role = "client"
+			}
 			return webui.Status{
 				PeerID:        selfID,
 				Role:          role,
 				Coordinator:   *coordURL,
-				ExitEnabled:   *asExit,
+				ExitEnabled:   exitOn,
 				ExitRegion:    *region,
 				ExitLoad:      n.ExitLoad(),
 				ToRegion:      curRegion,
@@ -338,6 +362,7 @@ func main() {
 				ConnectedExit: curExit,
 				SocksAddr:     socks,
 				CanSwitch:     switchTo != nil,
+				CanToggleExit: true,
 				Uptime:        time.Since(started).Round(time.Second).String(),
 			}
 		}
@@ -345,7 +370,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("web console: %v", err)
 		}
-		webSrv := webui.NewServer(statusFn, webui.Controls{SwitchRegion: switchTo})
+		webSrv := webui.NewServer(statusFn, webui.Controls{
+			SwitchRegion: switchTo,
+			ToggleExit: func(on bool) error {
+				setExit(on)
+				// Re-register immediately so the change is visible to others now
+				// (not only at the next refresh tick).
+				if coord != nil {
+					registerOnce(coord, selfID, n.AddrStrings(), *region, on, n.ExitLoad())
+				}
+				return nil
+			},
+		})
 		go func() { _ = http.Serve(l, webSrv.Handler()) }()
 		go func() { <-ctx.Done(); _ = l.Close() }()
 		fmt.Printf("web console: http://%s\n", *webAddr)
@@ -439,7 +475,7 @@ func registerOnce(c *coordinator.Client, selfID string, addrs []string, region s
 
 // keepRegistered periodically refreshes the node's directory entry (including
 // its current exit load) so it does not expire, until the context is cancelled.
-func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n *node.Node, region string, wantExit bool) {
+func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n *node.Node, region string, wantExit func() bool) {
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
 	for {
@@ -447,7 +483,7 @@ func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			registerOnce(c, selfID, n.AddrStrings(), region, wantExit, n.ExitLoad())
+			registerOnce(c, selfID, n.AddrStrings(), region, wantExit(), n.ExitLoad())
 		}
 	}
 }

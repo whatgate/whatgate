@@ -73,13 +73,30 @@ async function tick(){
 }
 function renderCtrl(s){
   const ctrl = document.getElementById('ctrl');
-  if (!s.canSwitch) { ctrl.innerHTML = ''; ctrl.dataset.init = ''; return; }
-  if (ctrl.dataset.init) return;
-  ctrl.innerHTML = '<div class="card"><div class="row"><span class="k">切换出口地区</span>'
-    + '<span class="v"><input id="rg" placeholder="如 JP"> <button id="sw">切换</button></span></div>'
-    + '<div class="msg" id="swmsg"></div></div>';
-  ctrl.dataset.init = '1';
-  document.getElementById('sw').onclick = doSwitch;
+  if (!s.canSwitch && !s.canToggleExit) { ctrl.innerHTML = ''; ctrl.dataset.init = ''; return; }
+  if (!ctrl.dataset.init) {
+    let html = '<div class="card">';
+    if (s.canSwitch) html += '<div class="row"><span class="k">切换出口地区</span>'
+      + '<span class="v"><input id="rg" placeholder="如 JP"> <button id="sw">切换</button></span></div>';
+    if (s.canToggleExit) html += '<div class="row"><span class="k">作为出口</span>'
+      + '<span class="v"><button id="ex"></button></span></div>';
+    html += '<div class="msg" id="swmsg"></div></div>';
+    ctrl.innerHTML = html;
+    ctrl.dataset.init = '1';
+    if (s.canSwitch) document.getElementById('sw').onclick = doSwitch;
+  }
+  const ex = document.getElementById('ex');
+  if (ex) { ex.textContent = s.exitEnabled ? '关闭出口' : '开启出口'; ex.onclick = () => doToggleExit(!s.exitEnabled); }
+}
+async function doToggleExit(on){
+  const msg = document.getElementById('swmsg');
+  msg.textContent = on ? '开启中…' : '关闭中…';
+  try {
+    const resp = await fetch('api/exit', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled:on})});
+    if (!resp.ok) { msg.textContent = '失败：' + esc(await resp.text()); return; }
+    msg.textContent = on ? '已开启出口' : '已关闭出口';
+    tick();
+  } catch(e) { msg.textContent = '错误：' + e; }
 }
 async function doSwitch(){
   const r = document.getElementById('rg').value.trim();

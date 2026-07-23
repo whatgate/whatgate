@@ -25,6 +25,7 @@ type Status struct {
 	ConnectedExit string `json:"connectedExit"` // exit peer ID the client tunnels through
 	SocksAddr     string `json:"socksAddr"`     // local SOCKS listen address (client)
 	CanSwitch     bool   `json:"canSwitch"`     // whether runtime region switching is available
+	CanToggleExit bool   `json:"canToggleExit"` // whether runtime exit on/off is available
 	Uptime        string `json:"uptime"`
 }
 
@@ -34,6 +35,8 @@ type Controls struct {
 	// SwitchRegion re-selects an exit in the given region and re-points the local
 	// SOCKS proxy at it, returning the new exit's peer ID.
 	SwitchRegion func(region string) (newExitID string, err error)
+	// ToggleExit turns this node's exit service on or off at runtime.
+	ToggleExit func(enabled bool) error
 }
 
 // Server serves the dashboard over HTTP.
@@ -78,6 +81,29 @@ func (s *Server) Handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"exit": exitID})
+	})
+	mux.HandleFunc("/api/exit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if s.controls.ToggleExit == nil {
+			http.Error(w, "exit toggle not available on this node", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if err := s.controls.ToggleExit(req.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]bool{"exitEnabled": req.Enabled})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
