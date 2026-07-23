@@ -26,6 +26,14 @@ go build -o bin/ ./...
 
 产出 `bin/coordinator` 与 `bin/node`（Windows 为 `.exe`）。终端用户无需装 Go，直接用预编译二进制。
 
+全局 TUN 模式（可选，体积更大、需管理员权限运行）：
+
+```bash
+go build -tags tun -o bin/node-tun ./cmd/node
+```
+
+（运行方式与平台前置见 [docs/tun-and-mobile.md](docs/tun-and-mobile.md)。）
+
 ### 方式 A：手动直连（无需协调器）
 
 ```bash
@@ -91,6 +99,7 @@ internal/coordinator  节点目录、邀请准入、信任图、HTTP 控制面
 internal/trust    信任图（小网/背书/层级）、信任范围、两级声誉
 internal/routing  选路引擎（地区 + 信任/延迟/负载综合排序）
 internal/exit     ExitGuard 出口策略（信任范围/端口/域名/限额）
+internal/tun      TUN 全局模式（tun2socks，-tags tun 构建标签）
 pkg/protocol      隧道 wire 协议（目标地址编解码）
 ```
 
@@ -101,7 +110,7 @@ pkg/protocol      隧道 wire 协议（目标地址编解码）
 - **M3** 小网与信任：信任图/背书/信任层级/信任范围过滤/两级声誉 ✅（两级声誉的事件驱动与图形化首启动向导待 UI 阶段）
 - **M4** 选路：地区 + 延迟/负载/信任度综合排序自动选最优 ✅
 - **M5** 出口治理：ExitGuard（信任范围 + 端口/域名黑名单 + 并发限额） ✅（威胁情报接入与带宽熔断留待增强）
-- **M6** 扩展：TUN 全局模式 → 移动端 ⬜
+- **M6** 扩展：桌面 TUN 全局模式（`-tags tun`，基于 tun2socks）可编译 + 移动端接入设计文档 ✅（TUN 需管理员/wintun.dll 在真机验证；移动端待平台 SDK 落地）。详见 [docs/tun-and-mobile.md](docs/tun-and-mobile.md)
 
 > 注：真实跨 NAT 的打洞与 AutoRelay 自动预约需在两台异网机器上实测；本地回环已验证隧道与中继数据路径本身。
 

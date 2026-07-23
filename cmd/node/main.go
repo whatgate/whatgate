@@ -41,6 +41,7 @@ import (
 	"github.com/whatgate/whatgate/internal/proxy"
 	"github.com/whatgate/whatgate/internal/routing"
 	"github.com/whatgate/whatgate/internal/trust"
+	"github.com/whatgate/whatgate/internal/tun"
 )
 
 func main() {
@@ -59,6 +60,9 @@ func main() {
 	blockPorts := flag.String("block-ports", "", "ExitGuard: extra destination ports to block, comma-separated (SMTP ports blocked by default)")
 	blockDomains := flag.String("block-domains", "", "ExitGuard: destination domains to block, comma-separated")
 	maxConns := flag.Int("max-conns", 0, "ExitGuard: max concurrent connections to serve as exit (0 = unlimited)")
+	tunMode := flag.Bool("tun", false, "route ALL system traffic through the tunnel via a TUN device (needs -tags tun build, admin, and wintun.dll on Windows)")
+	tunDevice := flag.String("tun-device", "whatgate0", "TUN adapter name (TUN mode)")
+	tunMTU := flag.Int("tun-mtu", 1500, "TUN interface MTU (TUN mode)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -172,6 +176,19 @@ func main() {
 			log.Fatalf("parse -connect: %v", err)
 		}
 		startClient(ctx, n, ai, *socksAddr)
+	}
+
+	// TUN mode: route the whole system's traffic through the local SOCKS proxy
+	// (which tunnels to the exit). Requires an active client-mode SOCKS proxy.
+	if *tunMode {
+		if *toRegion == "" && *connect == "" {
+			log.Fatalf("-tun requires client mode: set -to <region> or -connect <exit>")
+		}
+		if err := tun.Start(tun.Config{Device: *tunDevice, SocksAddr: *socksAddr, MTU: *tunMTU}); err != nil {
+			log.Fatalf("tun mode: %v", err)
+		}
+		defer tun.Stop()
+		fmt.Printf("TUN mode: ENABLED on %s → SOCKS %s (all system traffic routed through the tunnel)\n", *tunDevice, *socksAddr)
 	}
 
 	fmt.Println("running; press Ctrl+C to stop")
