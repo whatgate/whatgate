@@ -109,8 +109,14 @@ func main() {
 	)
 	setState := func(exit, region string) { stMu.Lock(); stExit, stRegion = exit, region; stMu.Unlock() }
 	getState := func() (string, string) { stMu.Lock(); defer stMu.Unlock(); return stExit, stRegion }
-	// switchTo, when non-nil, re-selects an exit in a region at runtime.
-	var switchTo func(region string) (string, error)
+	// switchTo re-selects an exit in a region at runtime; setupFn completes the
+	// first-run trust wizard (choose scope, then discover+connect); needsSetup
+	// reports whether that wizard is still pending.
+	var (
+		switchTo func(region string) (string, error)
+		setupFn  func(scope string) (string, error)
+	)
+	needsSetup := func() bool { return false }
 
 	// Sign identity-proving requests (join/register) with the node's key.
 	if coord != nil {
@@ -276,33 +282,70 @@ func main() {
 		go keepRegistered(ctx, coord, selfID, n, *region, isExitOn)
 
 		if *toRegion != "" {
-			scope, err := trust.ParseScope(*trustScope)
-			if err != nil {
-				log.Fatalf("%v", err)
-			}
-			ai, err := discoverExit(ctx, n, coord, *toRegion, selfID, scope)
-			if err != nil {
-				log.Fatalf("discover exit: %v", err)
-			}
 			// A switchable dialer lets the dashboard re-point the SOCKS proxy at a
-			// different exit/region at runtime.
+			// different exit/region at runtime. It starts empty; dials fail until an
+			// exit is selected (immediately if -trust-scope is set, otherwise after
+			// the first-run wizard).
 			sw := &proxy.SwitchableDialer{}
-			sw.Set(n.NewClientDialer(ai.ID))
-			setState(ai.ID.String(), *toRegion)
-			startClient(ctx, n, ai, *socksAddr, sw)
+			serveSOCKS(ctx, *socksAddr, sw)
 
-			switchTo = func(region string) (string, error) {
-				next, err := discoverExit(ctx, n, coord, region, selfID, scope)
+			var (
+				scopeMu    sync.Mutex
+				curScope   trust.Scope
+				configured bool
+			)
+			connectIn := func(sc trust.Scope, region string) (string, error) {
+				ai, err := discoverExit(ctx, n, coord, region, selfID, sc)
 				if err != nil {
 					return "", err
 				}
-				if err := n.Connect(ctx, next); err != nil {
+				if err := n.Connect(ctx, ai); err != nil {
 					return "", err
 				}
-				sw.Set(n.NewClientDialer(next.ID))
-				setState(next.ID.String(), region)
-				fmt.Printf("switched exit to %s in region %s\n", next.ID, region)
-				return next.ID.String(), nil
+				sw.Set(n.NewClientDialer(ai.ID))
+				setState(ai.ID.String(), region)
+				scopeMu.Lock()
+				curScope, configured = sc, true
+				scopeMu.Unlock()
+				return ai.ID.String(), nil
+			}
+
+			needsSetup = func() bool { scopeMu.Lock(); defer scopeMu.Unlock(); return !configured }
+			setupFn = func(scopeStr string) (string, error) {
+				sc, err := trust.ParseScope(scopeStr)
+				if err != nil {
+					return "", err
+				}
+				fmt.Printf("first-run wizard: trust scope = %s\n", sc)
+				return connectIn(sc, *toRegion)
+			}
+			switchTo = func(region string) (string, error) {
+				scopeMu.Lock()
+				sc, ok := curScope, configured
+				scopeMu.Unlock()
+				if !ok {
+					return "", fmt.Errorf("choose a trust scope first")
+				}
+				id, err := connectIn(sc, region)
+				if err == nil {
+					fmt.Printf("switched exit to %s in region %s\n", id, region)
+				}
+				return id, err
+			}
+
+			if *trustScope != "" {
+				sc, err := trust.ParseScope(*trustScope)
+				if err != nil {
+					log.Fatalf("%v", err)
+				}
+				if _, err := connectIn(sc, *toRegion); err != nil {
+					log.Fatalf("discover exit: %v", err)
+				}
+			} else {
+				if *webAddr == "" {
+					log.Fatalf("client mode needs a trust scope: set -trust-scope conservative|open, or -web to choose it in the first-run wizard")
+				}
+				fmt.Printf("no -trust-scope set: open the web console to choose (first-run wizard)\n")
 			}
 		}
 	}
@@ -363,6 +406,7 @@ func main() {
 				SocksAddr:     socks,
 				CanSwitch:     switchTo != nil,
 				CanToggleExit: true,
+				NeedsSetup:    needsSetup(),
 				Uptime:        time.Since(started).Round(time.Second).String(),
 			}
 		}
@@ -372,6 +416,7 @@ func main() {
 		}
 		webSrv := webui.NewServer(statusFn, webui.Controls{
 			SwitchRegion: switchTo,
+			Setup:        setupFn,
 			ToggleExit: func(on bool) error {
 				setExit(on)
 				// Re-register immediately so the change is visible to others now
@@ -399,7 +444,13 @@ func startClient(ctx context.Context, n *node.Node, exit peer.AddrInfo, socksAdd
 		log.Fatalf("connect to exit %s: %v", exit.ID, err)
 	}
 	fmt.Printf("connected to exit %s\n", exit.ID)
+	serveSOCKS(ctx, socksAddr, dialer)
+}
 
+// serveSOCKS starts the local SOCKS5 ingress on socksAddr, forwarding through
+// dialer. The dialer may be a SwitchableDialer that is (re)pointed at an exit
+// later — e.g. after the first-run trust wizard or a region switch.
+func serveSOCKS(ctx context.Context, socksAddr string, dialer proxy.Dialer) {
 	srv := &proxy.Server{Dialer: dialer}
 	l, err := net.Listen("tcp", socksAddr)
 	if err != nil {
@@ -414,7 +465,7 @@ func startClient(ctx context.Context, n *node.Node, exit peer.AddrInfo, socksAdd
 			log.Printf("socks server stopped: %v", err)
 		}
 	}()
-	fmt.Printf("SOCKS5 proxy on %s → tunneling to exit %s\n", socksAddr, exit.ID)
+	fmt.Printf("SOCKS5 proxy on %s\n", socksAddr)
 }
 
 // discoverExit queries the directory and picks the best exit in the desired

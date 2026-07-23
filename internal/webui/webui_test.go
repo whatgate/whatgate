@@ -117,6 +117,28 @@ func TestExitToggleInvokesControl(t *testing.T) {
 	}
 }
 
+func TestSetupInvokesControl(t *testing.T) {
+	var gotScope string
+	srv := NewServer(func() Status { return Status{} }, Controls{
+		Setup: func(scope string) (string, error) { gotScope = scope; return "exitX", nil },
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/setup", "application/json", strings.NewReader(`{"scope":"open"}`))
+	if err != nil {
+		t.Fatalf("POST /api/setup: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if gotScope != "open" || !strings.Contains(string(body), "exitX") {
+		t.Fatalf("setup not invoked properly (scope=%q body=%s)", gotScope, body)
+	}
+}
+
 func TestUnknownPathIs404(t *testing.T) {
 	srv := NewServer(func() Status { return Status{} }, Controls{})
 	ts := httptest.NewServer(srv.Handler())

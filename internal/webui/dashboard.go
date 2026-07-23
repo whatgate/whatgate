@@ -63,6 +63,7 @@ function pill(t,c){ return '<span class="pill '+c+'">'+esc(t)+'</span>'; }
 async function tick(){
   try {
     const s = await (await fetch('api/status',{cache:'no-store'})).json();
+    if (s.needsSetup) { renderWizard(); document.getElementById('foot').textContent = '首次设置'; return; }
     document.getElementById('card').innerHTML = rows.map(([k,f]) =>
       '<div class="row"><span class="k">'+esc(k)+'</span><span class="v">'+f(s)+'</span></div>').join('');
     renderCtrl(s);
@@ -70,6 +71,32 @@ async function tick(){
   } catch(e) {
     document.getElementById('foot').textContent = '无法获取状态：' + e;
   }
+}
+function renderWizard(){
+  const card = document.getElementById('card');
+  const ctrl = document.getElementById('ctrl');
+  ctrl.innerHTML = ''; ctrl.dataset.init = '';
+  if (card.dataset.wiz) return;
+  card.dataset.wiz = '1';
+  card.innerHTML =
+      '<div style="padding:10px 0 2px"><b>首次设置 · 选择信任范围</b></div>'
+    + '<p style="color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 8px">你将使用网中其他人的出口访问网络。请选择你愿意使用<b>哪些出口</b>——这关系到你的安全：</p>'
+    + '<div class="row"><span class="k"><b>保守</b><br><span style="color:var(--muted);font-size:12px">只用自己小网 / 已认证小网的出口，最安全</span></span>'
+    + '<span class="v"><button data-sc="conservative">选保守</button></span></div>'
+    + '<div class="row"><span class="k"><b>开放</b><br><span style="color:var(--muted);font-size:12px">可用全网陌生出口，选择更多，但需自行判断风险</span></span>'
+    + '<span class="v"><button data-sc="open">选开放</button></span></div>'
+    + '<div class="msg" id="wzmsg"></div>';
+  card.querySelectorAll('button[data-sc]').forEach(b => b.onclick = () => doSetup(b.dataset.sc));
+}
+async function doSetup(scope){
+  const msg = document.getElementById('wzmsg');
+  msg.textContent = '设置中…（正在寻找出口）';
+  try {
+    const resp = await fetch('api/setup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({scope})});
+    if (!resp.ok) { msg.textContent = '失败：' + esc(await resp.text()); return; }
+    document.getElementById('card').dataset.wiz = '';
+    tick();
+  } catch(e) { msg.textContent = '错误：' + e; }
 }
 function renderCtrl(s){
   const ctrl = document.getElementById('ctrl');

@@ -26,6 +26,7 @@ type Status struct {
 	SocksAddr     string `json:"socksAddr"`     // local SOCKS listen address (client)
 	CanSwitch     bool   `json:"canSwitch"`     // whether runtime region switching is available
 	CanToggleExit bool   `json:"canToggleExit"` // whether runtime exit on/off is available
+	NeedsSetup    bool   `json:"needsSetup"`    // first-run: user must choose a trust scope
 	Uptime        string `json:"uptime"`
 }
 
@@ -37,6 +38,9 @@ type Controls struct {
 	SwitchRegion func(region string) (newExitID string, err error)
 	// ToggleExit turns this node's exit service on or off at runtime.
 	ToggleExit func(enabled bool) error
+	// Setup completes the first-run trust wizard: it applies the chosen scope
+	// ("conservative"/"open"), selects an exit, and returns its peer ID.
+	Setup func(scope string) (exitID string, err error)
 }
 
 // Server serves the dashboard over HTTP.
@@ -75,6 +79,30 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		exitID, err := s.controls.SwitchRegion(req.Region)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"exit": exitID})
+	})
+	mux.HandleFunc("/api/setup", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if s.controls.Setup == nil {
+			http.Error(w, "setup not available on this node", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Scope string `json:"scope"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		exitID, err := s.controls.Setup(req.Scope)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
