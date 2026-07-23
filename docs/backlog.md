@@ -13,7 +13,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 |---|---|---|
 | P0 | ~~**签名注册**~~ ✅ **已完成** | 节点用 libp2p 私钥签名 register/join（`internal/authn`），协调器校验公钥→PeerID 一致 + 签名有效 + 时间戳新鲜（防重放）。入群签名见下条（小网操作鉴权）。 |
 | P1 | ~~**小网操作鉴权**~~ ✅ **已完成** | 入组需签名(证明本人 peerID，防冒充)+ 小网口令(防陌生人凭名字混入)；背书需签名且发起者为 fromGroup 成员。负面用例：错口令 403 / 冒充 401 / 非成员背书 403。 |
-| P1 | **声誉事件驱动 + 衰减 + 持久化** | 事件驱动 ✅（`trust.Outcome` served+1/blocked-10；出口经 `/report` 上报，调整 peer+小网声誉）；持久化 ✅（Phase 1.5）。**剩：随时间衰减**（分数向 0 回归，避免永久惩罚/陈旧），协调器加周期 `Reputation.Decay()`。 |
+| P1 | ~~**声誉事件驱动 + 衰减 + 持久化**~~ ✅ **已完成** | 事件驱动 ✅（`trust.Outcome`，出口 `/report`）；持久化 ✅（Phase 1.5）；衰减 ✅（`Reputation.Decay`，coordinator `-reputation-decay`，分数周期性向 0 回归）。 |
 | P1 | ~~**ExitGuard 声誉门槛**~~ ✅ **已完成** | `Policy.MinRequesterReputation`，出口授权时查请求方声誉、低于阈值即拒（`-min-reputation`，默认禁用）。与 2.6 成闭环：滥用被扣分后被各出口拒服务（e2e `scripts/e2e-reputation.ps1` 验证）。 |
 | P2 | **抗女巫 / 协调器限流** | 邀请制之外，加注册/入群频率限制、异常行为检测，防批量小号。 |
 
@@ -103,9 +103,9 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 7. **ExitGuard 声誉门槛** ✅ 已完成（`-min-reputation`；与 2.6 成闭环）。
 8. **连接留痕持久化** ✅ 已完成（出口 `-audit-log`，JSON Lines）。
 9. **威胁情报域名源** ✅ 已完成（`-threat-feed`）。
-10. **声誉衰减** ← **剩余小项**。周期性把分数向 0 回归（补 2.6 的遗留）。
+10. **声誉衰减** ✅ 已完成（coordinator `-reputation-decay`）。
 
-**Phase 2 出口治理闭环全部完成**（准入→身份→信任→声誉→出口门槛→留痕→威胁情报）。仅剩声誉衰减为小尾巴。**下一大块=Phase 3（传输/全局模式）或 Phase 4（UI/移动端）。**
+**Phase 2 出口治理闭环 100% 完成**（准入→身份→信任→声誉→出口门槛→留痕→威胁情报→衰减）。**下一大块=Phase 3（传输/全局模式）或 Phase 4（UI/移动端）。**
 
 ### Phase 3 — 传输与全局模式（独立轨，可与 Phase 2 并行）
 10. **UDP 支持** — SOCKS5 UDP ASSOCIATE / QUIC。
