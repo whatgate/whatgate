@@ -54,6 +54,24 @@ node -coordinator http://<host>:8080 -invite welcome -to JP -socks 127.0.0.1:108
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```
 
+### 出口保护（ExitGuard）
+
+作为出口时可加保护策略，抵御被陌生人滥用：
+
+```bash
+# 只给自己小网/已认证小网当出口；封禁高危端口；限并发
+node -coordinator http://host:8080 -invite welcome -exit -region JP \
+     -group myfriends \
+     -exit-scope conservative \
+     -block-domains evil.example.com \
+     -max-conns 50
+```
+
+- `-exit-scope conservative`：只服务信任圈内的请求者（陌生人被拒）
+- SMTP 端口（25/465/587）默认封禁；`-block-ports` 追加
+- `-block-domains`：目标域名黑名单
+- `-max-conns`：最大并发连接数
+
 ### 测试
 
 ```bash
@@ -69,8 +87,10 @@ internal/proxy    本地 SOCKS5 入口
 internal/tunnel   隧道两端（出/入），解耦具体传输
 internal/node     libp2p 接入：host、隧道、NAT 穿透、中继
 internal/relay    Circuit Relay v2 中继服务
-internal/coordinator  节点目录、邀请准入、HTTP 控制面
-internal/routing  选路引擎（按地区，后续加测速/信任）
+internal/coordinator  节点目录、邀请准入、信任图、HTTP 控制面
+internal/trust    信任图（小网/背书/层级）、信任范围、两级声誉
+internal/routing  选路引擎（地区 + 信任/延迟/负载综合排序）
+internal/exit     ExitGuard 出口策略（信任范围/端口/域名/限额）
 pkg/protocol      隧道 wire 协议（目标地址编解码）
 ```
 
@@ -78,9 +98,9 @@ pkg/protocol      隧道 wire 协议（目标地址编解码）
 
 - **M1** 骨架：本地 SOCKS5 + 两节点 libp2p 直连出网 ✅
 - **M2** 组网：邀请准入 + 节点目录/发现 + NAT 穿透 + Circuit Relay 兜底 ✅
-- **M3** 小网与信任：信任图/背书/信任层级/信任范围过滤/两级声誉 ✅（核心完成；两级声誉的事件驱动与图形化首启动向导待 UI 阶段）
-- **M4** 选路：地区 + 延迟/负载/信任度自动选最优 ⬜
-- **M5** 出口治理：ExitGuard 策略、限额熔断、可追溯、威胁情报 ⬜
+- **M3** 小网与信任：信任图/背书/信任层级/信任范围过滤/两级声誉 ✅（两级声誉的事件驱动与图形化首启动向导待 UI 阶段）
+- **M4** 选路：地区 + 延迟/负载/信任度综合排序自动选最优 ✅
+- **M5** 出口治理：ExitGuard（信任范围 + 端口/域名黑名单 + 并发限额） ✅（威胁情报接入与带宽熔断留待增强）
 - **M6** 扩展：TUN 全局模式 → 移动端 ⬜
 
 > 注：真实跨 NAT 的打洞与 AutoRelay 自动预约需在两台异网机器上实测；本地回环已验证隧道与中继数据路径本身。
