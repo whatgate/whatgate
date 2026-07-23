@@ -235,8 +235,10 @@ func main() {
 			defer exitMu.Unlock()
 			if on {
 				n.EnableGuardedExit(exitCfg)
+				n.EnableUDPExit() // note: UDP exit is not yet ExitGuard-gated (see backlog)
 			} else {
 				n.DisableExit()
+				n.DisableUDPExit()
 			}
 			exitOn = on
 		}
@@ -287,13 +289,24 @@ func main() {
 			// exit is selected (immediately if -trust-scope is set, otherwise after
 			// the first-run wizard).
 			sw := &proxy.SwitchableDialer{}
-			serveSOCKS(ctx, *socksAddr, sw)
-
 			var (
 				scopeMu    sync.Mutex
 				curScope   trust.Scope
+				curExitID  peer.ID
 				configured bool
 			)
+			// openUDP opens a UDP tunnel to the current exit for SOCKS5 UDP ASSOCIATE.
+			openUDP := func() (proxy.UDPTunnel, error) {
+				scopeMu.Lock()
+				id, ok := curExitID, configured
+				scopeMu.Unlock()
+				if !ok {
+					return nil, fmt.Errorf("no exit selected yet")
+				}
+				return n.OpenUDPSession(ctx, id)
+			}
+			serveSOCKS(ctx, *socksAddr, sw, openUDP)
+
 			connectIn := func(sc trust.Scope, region string) (string, error) {
 				ai, err := discoverExit(ctx, n, coord, region, selfID, sc)
 				if err != nil {
@@ -305,7 +318,7 @@ func main() {
 				sw.Set(n.NewClientDialer(ai.ID))
 				setState(ai.ID.String(), region)
 				scopeMu.Lock()
-				curScope, configured = sc, true
+				curScope, curExitID, configured = sc, ai.ID, true
 				scopeMu.Unlock()
 				return ai.ID.String(), nil
 			}
@@ -357,7 +370,9 @@ func main() {
 			log.Fatalf("parse -connect: %v", err)
 		}
 		setState(ai.ID.String(), "")
-		startClient(ctx, n, ai, *socksAddr, n.NewClientDialer(ai.ID))
+		startClient(ctx, n, ai, *socksAddr, n.NewClientDialer(ai.ID), func() (proxy.UDPTunnel, error) {
+			return n.OpenUDPSession(ctx, ai.ID)
+		})
 	}
 
 	// TUN mode: route the whole system's traffic through the local SOCKS proxy
@@ -453,19 +468,19 @@ func main() {
 
 // startClient connects to the exit and serves a local SOCKS5 proxy that tunnels
 // through dialer (which may be a SwitchableDialer for runtime exit switching).
-func startClient(ctx context.Context, n *node.Node, exit peer.AddrInfo, socksAddr string, dialer proxy.Dialer) {
+func startClient(ctx context.Context, n *node.Node, exit peer.AddrInfo, socksAddr string, dialer proxy.Dialer, openUDP func() (proxy.UDPTunnel, error)) {
 	if err := n.Connect(ctx, exit); err != nil {
 		log.Fatalf("connect to exit %s: %v", exit.ID, err)
 	}
 	fmt.Printf("connected to exit %s\n", exit.ID)
-	serveSOCKS(ctx, socksAddr, dialer)
+	serveSOCKS(ctx, socksAddr, dialer, openUDP)
 }
 
-// serveSOCKS starts the local SOCKS5 ingress on socksAddr, forwarding through
-// dialer. The dialer may be a SwitchableDialer that is (re)pointed at an exit
-// later — e.g. after the first-run trust wizard or a region switch.
-func serveSOCKS(ctx context.Context, socksAddr string, dialer proxy.Dialer) {
-	srv := &proxy.Server{Dialer: dialer}
+// serveSOCKS starts the local SOCKS5 ingress on socksAddr: TCP CONNECT via
+// dialer, and UDP ASSOCIATE via openUDP (a UDP tunnel factory). The dialer may
+// be a SwitchableDialer that is (re)pointed at an exit later.
+func serveSOCKS(ctx context.Context, socksAddr string, dialer proxy.Dialer, openUDP func() (proxy.UDPTunnel, error)) {
+	srv := &proxy.Server{Dialer: dialer, OpenUDPTunnel: openUDP}
 	l, err := net.Listen("tcp", socksAddr)
 	if err != nil {
 		log.Fatalf("listen socks: %v", err)

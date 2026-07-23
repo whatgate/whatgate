@@ -21,10 +21,14 @@ type Dialer interface {
 	Dial(ctx context.Context, addr string) (net.Conn, error)
 }
 
-// Server is a minimal SOCKS5 (no-auth, CONNECT-only) ingress that forwards
-// accepted connections through its Dialer.
+// Server is a minimal SOCKS5 (no-auth) ingress. TCP CONNECT is forwarded through
+// Dialer; UDP ASSOCIATE (if OpenUDPTunnel is set) is relayed through a UDP tunnel
+// to the exit.
 type Server struct {
 	Dialer Dialer
+	// OpenUDPTunnel, if set, opens a UDP tunnel to the exit for a UDP ASSOCIATE
+	// association. Nil means UDP ASSOCIATE is unsupported.
+	OpenUDPTunnel func() (UDPTunnel, error)
 }
 
 // SOCKS5 protocol constants (RFC 1928).
@@ -34,7 +38,8 @@ const (
 	authNoAuth       = 0x00
 	authNoAcceptable = 0xFF
 
-	cmdConnect = 0x01
+	cmdConnect      = 0x01
+	cmdUDPAssociate = 0x03
 
 	atypIPv4   = 0x01
 	atypDomain = 0x03
@@ -65,12 +70,24 @@ func (s *Server) handleConn(c net.Conn) {
 		return
 	}
 
-	addr, err := s.readConnectRequest(c)
+	cmd, addr, err := s.readRequest(c)
 	if err != nil {
-		// readConnectRequest sends the appropriate error reply itself.
+		// readRequest sends the appropriate error reply itself.
 		return
 	}
 
+	switch cmd {
+	case cmdConnect:
+		s.handleConnect(c, addr)
+	case cmdUDPAssociate:
+		s.handleUDPAssociate(c)
+	default:
+		_ = sendReply(c, repCommandNotSupported)
+	}
+}
+
+// handleConnect dials the target and pipes bytes both ways.
+func (s *Server) handleConnect(c net.Conn, addr string) {
 	remote, err := s.Dialer.Dial(context.Background(), addr)
 	if err != nil {
 		_ = sendReply(c, repGeneralFailure)
@@ -81,7 +98,6 @@ func (s *Server) handleConn(c net.Conn) {
 	if err := sendReply(c, repSucceeded); err != nil {
 		return
 	}
-
 	pipe(c, remote)
 }
 
@@ -109,59 +125,62 @@ func (s *Server) negotiate(c net.Conn) error {
 	return fmt.Errorf("no acceptable auth method")
 }
 
-// readConnectRequest parses a CONNECT request and returns the target as
-// "host:port". On a protocol or unsupported-feature error it writes the matching
-// SOCKS5 error reply before returning.
-func (s *Server) readConnectRequest(c net.Conn) (string, error) {
+// readRequest parses a SOCKS5 request, returning its command and target
+// ("host:port"). On a protocol or unsupported-feature error it writes the
+// matching SOCKS5 error reply before returning.
+func (s *Server) readRequest(c net.Conn) (cmd byte, addr string, err error) {
 	header := make([]byte, 4) // ver, cmd, rsv, atyp
 	if _, err := io.ReadFull(c, header); err != nil {
-		return "", err
+		return 0, "", err
 	}
 	if header[0] != socksVersion {
 		_ = sendReply(c, repGeneralFailure)
-		return "", fmt.Errorf("unsupported socks version %d", header[0])
+		return 0, "", fmt.Errorf("unsupported socks version %d", header[0])
 	}
-	if header[1] != cmdConnect {
-		_ = sendReply(c, repCommandNotSupported)
-		return "", fmt.Errorf("unsupported command %d", header[1])
-	}
+	cmd = header[1]
 
-	var host string
-	switch header[3] {
-	case atypIPv4:
-		buf := make([]byte, net.IPv4len)
-		if _, err := io.ReadFull(c, buf); err != nil {
-			return "", err
-		}
-		host = net.IP(buf).String()
-	case atypIPv6:
-		buf := make([]byte, net.IPv6len)
-		if _, err := io.ReadFull(c, buf); err != nil {
-			return "", err
-		}
-		host = net.IP(buf).String()
-	case atypDomain:
-		lenByte := make([]byte, 1)
-		if _, err := io.ReadFull(c, lenByte); err != nil {
-			return "", err
-		}
-		buf := make([]byte, int(lenByte[0]))
-		if _, err := io.ReadFull(c, buf); err != nil {
-			return "", err
-		}
-		host = string(buf)
-	default:
+	host, err := readAddr(c, header[3])
+	if err != nil {
 		_ = sendReply(c, repAddressNotSupported)
-		return "", fmt.Errorf("unsupported address type %d", header[3])
+		return cmd, "", err
 	}
 
 	portBuf := make([]byte, 2)
 	if _, err := io.ReadFull(c, portBuf); err != nil {
-		return "", err
+		return cmd, "", err
 	}
 	port := binary.BigEndian.Uint16(portBuf)
+	return cmd, net.JoinHostPort(host, strconv.Itoa(int(port))), nil
+}
 
-	return net.JoinHostPort(host, strconv.Itoa(int(port))), nil
+// readAddr reads a SOCKS5 address of the given type from r, returning the host.
+func readAddr(r io.Reader, atyp byte) (string, error) {
+	switch atyp {
+	case atypIPv4:
+		buf := make([]byte, net.IPv4len)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return "", err
+		}
+		return net.IP(buf).String(), nil
+	case atypIPv6:
+		buf := make([]byte, net.IPv6len)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return "", err
+		}
+		return net.IP(buf).String(), nil
+	case atypDomain:
+		lenByte := make([]byte, 1)
+		if _, err := io.ReadFull(r, lenByte); err != nil {
+			return "", err
+		}
+		buf := make([]byte, int(lenByte[0]))
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return "", err
+		}
+		return string(buf), nil
+	default:
+		return "", fmt.Errorf("unsupported address type %d", atyp)
+	}
 }
 
 // sendReply writes a SOCKS5 reply with the given status and a zero bound
