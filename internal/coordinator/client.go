@@ -162,6 +162,23 @@ func (c *Client) TrustBetween(from, to string) (trust.Tier, error) {
 	return out.Tier, nil
 }
 
+// GroupsOf returns the groups a peer belongs to.
+func (c *Client) GroupsOf(peerID string) ([]string, error) {
+	resp, err := c.http.Get(c.baseURL + "/groups?peer=" + url.QueryEscape(peerID))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, statusError("GET /groups", resp)
+	}
+	var out groupsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Groups, nil
+}
+
 // JoinGroup joins (or, for the first member, creates) a small-network group.
 // The caller must be the peer identified by peerID (its Signer signs the join),
 // and must present the group's secret; the first join sets the secret.

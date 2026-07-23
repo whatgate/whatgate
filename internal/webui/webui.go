@@ -1,7 +1,7 @@
 // Package webui serves a small local dashboard for a running WhatGate node: a
-// status page and a JSON endpoint showing live state (identity, role, exit
-// status, connected exit, region, trust scope). It is read-only for now;
-// runtime controls (toggle exit, switch region) are a planned follow-up.
+// live status page plus runtime controls — switch exit region, toggle serving as
+// an exit, the first-run trust wizard, and small-network management — exposed as
+// JSON endpoints driven by injected Controls callbacks.
 //
 // The page is self-contained (no external assets) and meant to be bound to
 // localhost only.
@@ -14,20 +14,22 @@ import (
 
 // Status is the live node state shown by the dashboard.
 type Status struct {
-	PeerID        string `json:"peerID"`
-	Role          string `json:"role"`        // "exit", "client", "client+exit", or "idle"
-	Coordinator   string `json:"coordinator"` // coordinator URL, or "" (manual/none)
-	ExitEnabled   bool   `json:"exitEnabled"`
-	ExitRegion    string `json:"exitRegion"`
-	ExitLoad      int    `json:"exitLoad"`
-	ToRegion      string `json:"toRegion"`      // desired exit region (client)
-	TrustScope    string `json:"trustScope"`    // client trust scope
-	ConnectedExit string `json:"connectedExit"` // exit peer ID the client tunnels through
-	SocksAddr     string `json:"socksAddr"`     // local SOCKS listen address (client)
-	CanSwitch     bool   `json:"canSwitch"`     // whether runtime region switching is available
-	CanToggleExit bool   `json:"canToggleExit"` // whether runtime exit on/off is available
-	NeedsSetup    bool   `json:"needsSetup"`    // first-run: user must choose a trust scope
-	Uptime        string `json:"uptime"`
+	PeerID        string   `json:"peerID"`
+	Role          string   `json:"role"`        // "exit", "client", "client+exit", or "idle"
+	Coordinator   string   `json:"coordinator"` // coordinator URL, or "" (manual/none)
+	ExitEnabled   bool     `json:"exitEnabled"`
+	ExitRegion    string   `json:"exitRegion"`
+	ExitLoad      int      `json:"exitLoad"`
+	ToRegion      string   `json:"toRegion"`      // desired exit region (client)
+	TrustScope    string   `json:"trustScope"`    // client trust scope
+	ConnectedExit string   `json:"connectedExit"` // exit peer ID the client tunnels through
+	SocksAddr     string   `json:"socksAddr"`     // local SOCKS listen address (client)
+	CanSwitch     bool     `json:"canSwitch"`     // whether runtime region switching is available
+	CanToggleExit bool     `json:"canToggleExit"` // whether runtime exit on/off is available
+	NeedsSetup    bool     `json:"needsSetup"`    // first-run: user must choose a trust scope
+	Groups        []string `json:"groups"`        // small-networks this node belongs to
+	CanManage     bool     `json:"canManage"`     // whether group management is available
+	Uptime        string   `json:"uptime"`
 }
 
 // Controls are runtime actions the dashboard can trigger. Nil callbacks are
@@ -41,6 +43,10 @@ type Controls struct {
 	// Setup completes the first-run trust wizard: it applies the chosen scope
 	// ("conservative"/"open"), selects an exit, and returns its peer ID.
 	Setup func(scope string) (exitID string, err error)
+	// JoinGroup joins (or founds) a small-network with the given secret.
+	JoinGroup func(groupID, secret string) error
+	// Endorse makes fromGroup vouch for toGroup (caller must be a fromGroup member).
+	Endorse func(fromGroup, toGroup string) error
 }
 
 // Server serves the dashboard over HTTP.
@@ -85,6 +91,52 @@ func (s *Server) Handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"exit": exitID})
+	})
+	mux.HandleFunc("/api/group/join", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if s.controls.JoinGroup == nil {
+			http.Error(w, "group management not available", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			GroupID string `json:"groupID"`
+			Secret  string `json:"secret"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if err := s.controls.JoinGroup(req.GroupID, req.Secret); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/api/group/endorse", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if s.controls.Endorse == nil {
+			http.Error(w, "group management not available", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			FromGroup string `json:"fromGroup"`
+			ToGroup   string `json:"toGroup"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if err := s.controls.Endorse(req.FromGroup, req.ToGroup); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/api/setup", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

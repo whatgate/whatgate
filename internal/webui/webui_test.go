@@ -139,6 +139,28 @@ func TestSetupInvokesControl(t *testing.T) {
 	}
 }
 
+func TestGroupJoinInvokesControl(t *testing.T) {
+	var gotID, gotSecret string
+	var called bool
+	srv := NewServer(func() Status { return Status{} }, Controls{
+		JoinGroup: func(groupID, secret string) error { gotID, gotSecret, called = groupID, secret, true; return nil },
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/group/join", "application/json", strings.NewReader(`{"groupID":"fam","secret":"k"}`))
+	if err != nil {
+		t.Fatalf("POST /api/group/join: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !called || gotID != "fam" || gotSecret != "k" {
+		t.Fatalf("JoinGroup not invoked properly (id=%q secret=%q)", gotID, gotSecret)
+	}
+}
+
 func TestUnknownPathIs404(t *testing.T) {
 	srv := NewServer(func() Status { return Status{} }, Controls{})
 	ts := httptest.NewServer(srv.Handler())

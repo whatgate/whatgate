@@ -41,6 +41,7 @@ const dashboardHTML = `<!doctype html>
     <div class="row"><span class="k">加载中…</span><span class="v"></span></div>
   </div>
   <div id="ctrl" style="margin-top:16px"></div>
+  <div id="groups" style="margin-top:16px"></div>
   <div class="foot" id="foot"></div>
 </div>
 <script>
@@ -67,6 +68,7 @@ async function tick(){
     document.getElementById('card').innerHTML = rows.map(([k,f]) =>
       '<div class="row"><span class="k">'+esc(k)+'</span><span class="v">'+f(s)+'</span></div>').join('');
     renderCtrl(s);
+    renderGroups(s);
     document.getElementById('foot').textContent = '更新于 ' + new Date().toLocaleTimeString();
   } catch(e) {
     document.getElementById('foot').textContent = '无法获取状态：' + e;
@@ -136,6 +138,46 @@ async function doSwitch(){
     const j = await resp.json();
     msg.textContent = '已切换到出口 ' + esc(j.exit);
     tick();
+  } catch(e) { msg.textContent = '错误：' + e; }
+}
+function renderGroups(s){
+  const g = document.getElementById('groups');
+  if (!s.canManage) { g.innerHTML = ''; g.dataset.init = ''; return; }
+  if (!g.dataset.init) {
+    g.innerHTML = '<div class="card">'
+      + '<div class="row"><span class="k">我的小网</span><span class="v" id="mygroups">—</span></div>'
+      + '<div class="row"><span class="k">加入 / 创建小网</span><span class="v"><input id="gid" placeholder="小网名"> <input id="gsec" placeholder="口令"> <button id="gjoin">加入</button></span></div>'
+      + '<div class="row"><span class="k">背书（我的组→对方组）</span><span class="v"><input id="gfrom" placeholder="我的组"> <input id="gto" placeholder="对方组"> <button id="gend">背书</button></span></div>'
+      + '<div class="msg" id="gmsg"></div></div>';
+    g.dataset.init = '1';
+    document.getElementById('gjoin').onclick = doJoinGroup;
+    document.getElementById('gend').onclick = doEndorse;
+  }
+  const mg = document.getElementById('mygroups');
+  if (mg) mg.textContent = (s.groups && s.groups.length) ? s.groups.join(', ') : '（暂无）';
+}
+async function doJoinGroup(){
+  const gid = document.getElementById('gid').value.trim();
+  const sec = document.getElementById('gsec').value;
+  const msg = document.getElementById('gmsg');
+  if (!gid) { msg.textContent = '请输入小网名'; return; }
+  msg.textContent = '加入中…';
+  try {
+    const resp = await fetch('api/group/join', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({groupID:gid, secret:sec})});
+    if (!resp.ok) { msg.textContent = '失败：' + esc(await resp.text()); return; }
+    msg.textContent = '已加入 ' + esc(gid); tick();
+  } catch(e) { msg.textContent = '错误：' + e; }
+}
+async function doEndorse(){
+  const from = document.getElementById('gfrom').value.trim();
+  const to = document.getElementById('gto').value.trim();
+  const msg = document.getElementById('gmsg');
+  if (!from || !to) { msg.textContent = '请输入两个组名'; return; }
+  msg.textContent = '背书中…';
+  try {
+    const resp = await fetch('api/group/endorse', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fromGroup:from, toGroup:to})});
+    if (!resp.ok) { msg.textContent = '失败：' + esc(await resp.text()); return; }
+    msg.textContent = '已背书 ' + esc(from) + ' → ' + esc(to);
   } catch(e) { msg.textContent = '错误：' + e; }
 }
 tick(); setInterval(tick, 2000);

@@ -384,6 +384,10 @@ func main() {
 		statusFn := func() webui.Status {
 			curExit, curRegion := getState()
 			exitOn := isExitOn()
+			var groups []string
+			if coord != nil {
+				groups, _ = coord.GroupsOf(selfID)
+			}
 			role := "idle"
 			switch {
 			case exitOn && isClient:
@@ -407,6 +411,8 @@ func main() {
 				CanSwitch:     switchTo != nil,
 				CanToggleExit: true,
 				NeedsSetup:    needsSetup(),
+				Groups:        groups,
+				CanManage:     coord != nil,
 				Uptime:        time.Since(started).Round(time.Second).String(),
 			}
 		}
@@ -414,9 +420,17 @@ func main() {
 		if err != nil {
 			log.Fatalf("web console: %v", err)
 		}
+		var joinGroupFn func(string, string) error
+		var endorseFn func(string, string) error
+		if coord != nil {
+			joinGroupFn = func(gid, secret string) error { return coord.JoinGroup(gid, selfID, secret) }
+			endorseFn = func(from, to string) error { return coord.EndorseGroup(from, to) }
+		}
 		webSrv := webui.NewServer(statusFn, webui.Controls{
 			SwitchRegion: switchTo,
 			Setup:        setupFn,
+			JoinGroup:    joinGroupFn,
+			Endorse:      endorseFn,
 			ToggleExit: func(on bool) error {
 				setExit(on)
 				// Re-register immediately so the change is visible to others now

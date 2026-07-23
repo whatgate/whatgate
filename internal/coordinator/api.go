@@ -73,6 +73,10 @@ type reputationResponse struct {
 	Score int `json:"score"`
 }
 
+type groupsResponse struct {
+	Groups []string `json:"groups"`
+}
+
 // RelayInfo advertises the coordinator's co-located Circuit Relay so nodes can
 // configure it as a fallback path.
 type RelayInfo struct {
@@ -195,7 +199,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/trust", s.handleTrust)
 	mux.HandleFunc("/report", s.handleReport)
 	mux.HandleFunc("/reputation", s.handleReputation)
+	mux.HandleFunc("/groups", s.handleGroups)
 	return mux
+}
+
+// handleGroups returns the groups a peer belongs to.
+func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	groups := s.graph.GroupsOf(r.URL.Query().Get("peer"))
+	if groups == nil {
+		groups = []string{}
+	}
+	writeJSON(w, http.StatusOK, groupsResponse{Groups: groups})
 }
 
 // handleReport applies a reputation change based on an exit's report about a
