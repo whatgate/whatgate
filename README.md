@@ -78,13 +78,19 @@ coordinator -addr :8080 -invite welcome -state ./coordinator-state.json -signing
 # 出口节点：加入并注册为某地区(如 JP)出口（-coordinator-key 钉住协调器公钥）
 node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> -invite welcome -exit -region JP
 
-# 客户端：加入并按地区自动发现出口
-node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> -invite welcome -to JP -socks 127.0.0.1:1080
+# 客户端：加入并按地区自动发现出口（多协调器逗号分隔可故障切换；-coordinator-cache 缓存目录抗断线）
+node -coordinator https://a:8080,https://b:8080 -coordinator-key <协调器公钥> -coordinator-cache ./dir.cache -invite welcome -to JP -socks 127.0.0.1:1080
 
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```
 
-> 🛡️ **抗封锁·响应认证（A0）**：协调器用 `-signing-key` 对**目录响应**签名；节点用 `-coordinator-key` 钉住其公钥后，会**校验目录签名并拒绝**未签名/被别的密钥签名/被回滚（旧序号）的目录——即便协调器被 MITM 或换成恶意镜像，也无法把你导向敌手出口。未钉公钥时节点会打印告警。TLS（`https://`）另外保护控制面**机密性**（问了哪些出口不外泄），二者互补。整体设计与路线图见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
+> 🛡️ **抗封锁（A0/A1/A3）**：
+> - **响应认证（A0）**：协调器 `-signing-key` 对**目录响应**签名；节点 `-coordinator-key` 钉住其公钥后，**校验签名并拒绝**未签名/别的密钥签名/被回滚（旧序号）的目录——协调器被 MITM 或换成恶意镜像也无法把你导向敌手出口。未钉公钥会告警。
+> - **多端点故障切换（A1）**：`-coordinator` 逗号分隔多个地址；某个被封（连不上）自动切下一个，"业务错误"（能连但拒）则如实上抛不误切。为真正独立，多个端点应跨不同故障域（ASN/DNS 商/CDN/运营者）。
+> - **本地目录缓存（A3）**：`-coordinator-cache`（需 `-coordinator-key`）把**已验签**的目录落盘（仅本人可读）；协调器全被封时用缓存续命，避免"一封就断"。缓存仍受签名/过期/回滚校验，过期即拒；用缓存时会打印告警。
+> - **TLS（`https://`）** 另外保护控制面**机密性**（问了哪些出口不外泄），与签名互补。
+>
+> 整体设计与分阶段路线图（含 A4/Tier B 探测抗性、Tier C 去中心化发现）见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
 
 ### 本地状态面板
 

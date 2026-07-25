@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -40,6 +41,29 @@ type Client struct {
 	pinnedKey crypto.PubKey
 	dirMu     sync.Mutex
 	dirFloor  uint64 // highest directory serial accepted so far (anti-rollback)
+	cachePath string // if set (and pinned), the last verified directory is cached here
+	stale     bool   // whether the last DirectoryFor result came from the cache
+}
+
+// SetDirectoryCache enables persisting the last verified directory to path
+// (owner-only) and serving it when every coordinator endpoint is unreachable.
+// Only verified (pinned) directories are cached, so a node never dials on
+// unauthenticated data. Callers should check LastDirectoryStale to know when
+// they are running on possibly-outdated cached data.
+func (c *Client) SetDirectoryCache(path string) { c.cachePath = path }
+
+// LastDirectoryStale reports whether the most recent DirectoryFor was served
+// from the local cache (coordinator unreachable) rather than fetched live.
+func (c *Client) LastDirectoryStale() bool {
+	c.dirMu.Lock()
+	defer c.dirMu.Unlock()
+	return c.stale
+}
+
+func (c *Client) setStale(v bool) {
+	c.dirMu.Lock()
+	c.stale = v
+	c.dirMu.Unlock()
 }
 
 // SetPinnedKey pins the control-plane key that signed discovery responses must
@@ -152,16 +176,25 @@ func (c *Client) Directory() ([]NodeInfo, error) {
 // it as the tierOf lookup for trust-scoped exit selection. Pass from="" to skip
 // annotation (all tiers default to stranger).
 func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, error) {
+	c.setStale(false)
 	path := "/directory"
 	if from != "" {
 		path += "?from=" + url.QueryEscape(from)
 	}
+
 	resp, err := c.get("GET /directory", path)
 	if err != nil {
+		// Every endpoint is unreachable — fall back to the verified cache if any.
+		if nodes, tiers, ok := c.directoryFromCache(); ok {
+			return nodes, tiers, nil
+		}
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if nodes, tiers, ok := c.directoryFromCache(); ok {
+			return nodes, tiers, nil
+		}
 		return nil, nil, statusError("GET /directory", resp)
 	}
 	body, err := io.ReadAll(resp.Body)
@@ -171,6 +204,8 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 
 	// A pinned client requires a verified, non-rolled-back signed envelope and
 	// uses its payload as the entries; an unpinned client reads the bare array.
+	// A cryptographic verification failure is NOT masked by the cache — it may be
+	// an active MITM, so it must surface.
 	entriesJSON := body
 	if c.pinnedKey != nil {
 		payload, err := c.verifyDirectory(body)
@@ -178,12 +213,20 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 			return nil, nil, err
 		}
 		entriesJSON = payload
+		c.saveDirectoryCache(body)
 	}
 
 	var entries []directoryEntry
 	if err := json.Unmarshal(entriesJSON, &entries); err != nil {
 		return nil, nil, err
 	}
+	nodes, tiers := entriesToNodes(entries)
+	return nodes, tiers, nil
+}
+
+// entriesToNodes splits directory entries into the node list and the trust-tier
+// lookup.
+func entriesToNodes(entries []directoryEntry) ([]NodeInfo, map[string]trust.Tier) {
 	nodes := make([]NodeInfo, 0, len(entries))
 	tiers := make(map[string]trust.Tier, len(entries))
 	for _, e := range entries {
@@ -196,7 +239,45 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 		})
 		tiers[e.PeerID] = e.Tier
 	}
-	return nodes, tiers, nil
+	return nodes, tiers
+}
+
+// saveDirectoryCache persists a verified signed directory envelope (owner-only)
+// when caching is enabled. Best-effort: a write failure is non-fatal.
+func (c *Client) saveDirectoryCache(body []byte) {
+	if c.cachePath == "" {
+		return
+	}
+	tmp := c.cachePath + ".tmp"
+	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, c.cachePath)
+}
+
+// directoryFromCache loads and re-verifies the cached directory, returning it
+// (flagged stale) only when caching is enabled, a pinned key is configured, and
+// the cached envelope still verifies (signature, type, expiry, rollback floor).
+// It never serves unverified or expired data.
+func (c *Client) directoryFromCache() ([]NodeInfo, map[string]trust.Tier, bool) {
+	if c.cachePath == "" || c.pinnedKey == nil {
+		return nil, nil, false
+	}
+	body, err := os.ReadFile(c.cachePath)
+	if err != nil {
+		return nil, nil, false
+	}
+	payload, err := c.verifyDirectory(body)
+	if err != nil {
+		return nil, nil, false
+	}
+	var entries []directoryEntry
+	if err := json.Unmarshal(payload, &entries); err != nil {
+		return nil, nil, false
+	}
+	c.setStale(true)
+	nodes, tiers := entriesToNodes(entries)
+	return nodes, tiers, true
 }
 
 // verifyDirectory checks a signed directory envelope against the pinned key and

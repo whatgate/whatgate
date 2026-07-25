@@ -63,6 +63,7 @@ func main() {
 	socksAddr := flag.String("socks", "127.0.0.1:1080", "local SOCKS5 listen address (client mode)")
 	coordURL := flag.String("coordinator", "", "coordinator base URL(s), comma-separated for failover, e.g. https://a:8080,https://b:8080")
 	coordKey := flag.String("coordinator-key", "", "pinned coordinator public key (base64, printed by the coordinator): the directory must be signed by it, else it is rejected — defeats a rogue/MITM coordinator")
+	coordCache := flag.String("coordinator-cache", "", "path to cache the last verified directory (requires -coordinator-key); served when every coordinator endpoint is unreachable, so a blocked coordinator doesn't instantly disconnect you")
 	invite := flag.String("invite", "", "invite code to redeem when joining via coordinator")
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
 	toRegion := flag.String("to", "", "desired exit region to discover via coordinator (client mode)")
@@ -116,7 +117,16 @@ func main() {
 			}
 			coord.SetPinnedKey(pub)
 			fmt.Println("coordinator key: pinned (directory responses are verified)")
+			// The cache only holds verified (pinned) directories, so it is only
+			// meaningful alongside a pinned key.
+			if *coordCache != "" {
+				coord.SetDirectoryCache(*coordCache)
+				fmt.Printf("directory cache: %s\n", *coordCache)
+			}
 		} else {
+			if *coordCache != "" {
+				fmt.Println("WARNING: -coordinator-cache ignored without -coordinator-key (only verified directories are cached)")
+			}
 			fmt.Println("WARNING: no -coordinator-key pinned; the directory is unauthenticated — a rogue/MITM coordinator can steer you onto a hostile exit")
 		}
 		// TLS carries the control plane's confidentiality; without it, which exits
@@ -592,6 +602,9 @@ func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, regi
 	nodes, tiers, err := c.DirectoryFor(selfID)
 	if err != nil {
 		return peer.AddrInfo{}, err
+	}
+	if c.LastDirectoryStale() {
+		log.Println("WARNING: coordinator unreachable; using cached (possibly stale) directory")
 	}
 	tierOf := func(p string) trust.Tier { return tiers[p] }
 

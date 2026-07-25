@@ -27,10 +27,13 @@ const maxBodyBytes = 64 << 10
 // malicious registrant can't bloat the directory (which is broadcast to all).
 const maxRegisterAddrs = 32
 
-// directorySignatureTTL bounds how long a signed directory is accepted. The
-// live directory changes constantly (nodes refresh presence), so a short window
-// limits how long a captured signed response stays usable.
-const directorySignatureTTL = 90 * time.Second
+// directorySignatureTTL bounds how long a signed directory stays acceptable —
+// this is the *offline / cache* hard limit, not a freshness window: online, a
+// node always prefers a live fetch, and rollback protection (monotonic serial)
+// stops an older-than-seen directory being replayed. 24h lets a node that loses
+// its coordinator keep using the last-known directory as a last resort. Emergency
+// invalidation is the job of the revocation epoch (future), not this TTL.
+const directorySignatureTTL = 24 * time.Hour
 
 // decodeJSON reads a size-limited JSON body into v, returning false (and writing
 // a 400) on any error.
