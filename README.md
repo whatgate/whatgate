@@ -153,4 +153,4 @@ pkg/protocol      隧道 wire 协议（目标地址编解码）
 
 ## 许可
 
-TBD
+[MIT](LICENSE) © 2026 WhatGate
