@@ -18,7 +18,7 @@
 | F2 | [#2](https://github.com/whatgate/whatgate/issues/2) | 🔴 HIGH | 声誉举报可被操纵，架空 `-min-reputation` | 🟡 部分（自证拒绝+重放去重；完整修复待做） |
 | F3 | [#3](https://github.com/whatgate/whatgate/issues/3) | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | ✅ fixed |
 | F4 | [#4](https://github.com/whatgate/whatgate/issues/4) | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | ✅ fixed |
-| F5 | [#5](https://github.com/whatgate/whatgate/issues/5) | 🟠 MEDIUM | 协调面明文 HTTP，泄露邀请码/小网口令 | open |
+| F5 | [#5](https://github.com/whatgate/whatgate/issues/5) | 🟠 MEDIUM | 协调面明文 HTTP，泄露邀请码/小网口令 | 🟡 部分（支持 TLS + 明文告警；口令改 HMAC 待做） |
 | F6 | [#6](https://github.com/whatgate/whatgate/issues/6) | 🟡 LOW-MED | 协调器 JSON 端点无请求体大小限制 | ✅ fixed |
 | F7 | [#7](https://github.com/whatgate/whatgate/issues/7) | 🟡 LOW | 2 分钟重放窗口，无 nonce | ✅ fixed |
 | F8 | [#8](https://github.com/whatgate/whatgate/issues/8) | 🟡 LOW | 远程 URL 内嵌明文 PAT（凭据卫生） | open |
@@ -119,6 +119,11 @@
 
 **修复**：协调器上 TLS（文档强制 https + 证书校验）；口令类字段改为"证明知道口令"
 （HMAC 挑战）而非明文传口令。
+
+> 🟡 **部分修复**（`refs #5`）：coordinator 支持 `-tls-cert/-tls-key` 直接跑 HTTPS（或在 TLS 反代后
+> 终结）；未启用时启动打印**明文告警**。客户端用 `https://` 的 `-coordinator` 即由 Go 默认校验证书。
+> **剩**：把小网口令/邀请码从"明文传输"改为"证明知道口令"（HMAC 挑战），即使 TLS 之外也不落明文——
+> 作为后续项保留在 issue #5。
 
 ---
 

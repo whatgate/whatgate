@@ -71,6 +71,7 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```bash
 # 协调器（兼跑中继），播种邀请码；-state 让准入/小网/声誉跨重启留存
 # 声誉每小时向 0 衰减（-reputation-decay），被罚节点自动恢复
+# 生产务必启用 TLS（-tls-cert/-tls-key，或置于 TLS 反代后），否则邀请码/小网口令明文过网
 coordinator -addr :8080 -invite welcome -state ./coordinator-state.json
 
 # 出口节点：加入并注册为某地区(如 JP)出口

@@ -34,6 +34,8 @@ func main() {
 	issuer := flag.String("issuer", "founder", "issuer attributed to the seeded invite")
 	uses := flag.Int("uses", 100, "how many members the seeded invite may admit")
 	ttl := flag.Duration("ttl", 60*time.Second, "directory entry time-to-live")
+	tlsCert := flag.String("tls-cert", "", "path to a TLS certificate (with -tls-key, serve HTTPS so invite codes/group secrets aren't sent in cleartext)")
+	tlsKey := flag.String("tls-key", "", "path to the TLS private key (pairs with -tls-cert)")
 	relayListen := flag.String("relay-listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr for the co-located relay (empty to disable)")
 	statePath := flag.String("state", "", "path to a JSON state file for durable admissions/groups/reputation (empty = in-memory only)")
 	repDecay := flag.Int("reputation-decay", 1, "reputation points to decay toward zero each interval (0 = disabled)")
@@ -103,5 +105,17 @@ func main() {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	// Serve HTTPS when a cert/key pair is given. The control plane carries
+	// secrets (invite codes, group secrets) that must not travel in cleartext;
+	// operators without a cert should terminate TLS at a reverse proxy instead.
+	if (*tlsCert == "") != (*tlsKey == "") {
+		log.Fatal("coordinator: -tls-cert and -tls-key must be set together")
+	}
+	if *tlsCert != "" {
+		fmt.Println("TLS: enabled")
+		log.Fatal(httpSrv.ListenAndServeTLS(*tlsCert, *tlsKey))
+	}
+	fmt.Println("TLS: DISABLED — control plane is plaintext; use -tls-cert/-tls-key or a TLS-terminating proxy in production")
 	log.Fatal(httpSrv.ListenAndServe())
 }
