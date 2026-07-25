@@ -12,16 +12,16 @@
 建议修复顺序：**F1 → F3 → F4**（出口侧，护普通用户的机器与内网）→ **F2**（信任系统抗操纵）
 → **F5/F6/F7**（协调面加固）→ **F8**（凭据卫生）。
 
-| 编号 | 严重度 | 概述 | 状态 |
-|---|---|---|---|
-| F1 | 🔴 HIGH | 出口 SSRF：可连内网/本机/云元数据 | open |
-| F2 | 🔴 HIGH | 声誉举报可被操纵，架空 `-min-reputation` | open |
-| F3 | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | open |
-| F4 | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | open |
-| F5 | 🟠 MEDIUM | 协调面明文 HTTP，泄露邀请码/小网口令 | open |
-| F6 | 🟡 LOW-MED | 协调器 JSON 端点无请求体大小限制 | open |
-| F7 | 🟡 LOW | 2 分钟重放窗口，无 nonce | open |
-| F8 | 🟡 LOW | 远程 URL 内嵌明文 PAT（凭据卫生） | open |
+| 编号 | Issue | 严重度 | 概述 | 状态 |
+|---|---|---|---|---|
+| F1 | [#1](https://github.com/whatgate/whatgate/issues/1) | 🔴 HIGH | 出口 SSRF：可连内网/本机/云元数据 | open |
+| F2 | [#2](https://github.com/whatgate/whatgate/issues/2) | 🔴 HIGH | 声誉举报可被操纵，架空 `-min-reputation` | open |
+| F3 | [#3](https://github.com/whatgate/whatgate/issues/3) | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | open |
+| F4 | [#4](https://github.com/whatgate/whatgate/issues/4) | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | open |
+| F5 | [#5](https://github.com/whatgate/whatgate/issues/5) | 🟠 MEDIUM | 协调面明文 HTTP，泄露邀请码/小网口令 | open |
+| F6 | [#6](https://github.com/whatgate/whatgate/issues/6) | 🟡 LOW-MED | 协调器 JSON 端点无请求体大小限制 | open |
+| F7 | [#7](https://github.com/whatgate/whatgate/issues/7) | 🟡 LOW | 2 分钟重放窗口，无 nonce | open |
+| F8 | [#8](https://github.com/whatgate/whatgate/issues/8) | 🟡 LOW | 远程 URL 内嵌明文 PAT（凭据卫生） | open |
 
 ---
 
