@@ -48,6 +48,21 @@ func TestReportAdjustsPeerAndGroupReputation(t *testing.T) {
 	}
 }
 
+func TestReportRejectsSelfReport(t *testing.T) {
+	dir := NewDirectory(time.Minute, nil)
+	inv := NewInviteStore(nil)
+	inv.Create("welcome", "founder", 100)
+	ts := httptest.NewServer(NewServer(dir, inv).Handler())
+	defer ts.Close()
+
+	// An admitted member cannot farm or grief its own score.
+	self, selfID := admitAndRegister(t, ts.URL, "welcome")
+	err := self.ReportOutcome(selfID, trust.OutcomeServed)
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("self-report should be 403, got %v", err)
+	}
+}
+
 func TestReportRequiresAdmittedReporter(t *testing.T) {
 	dir := NewDirectory(time.Minute, nil)
 	inv := NewInviteStore(nil)

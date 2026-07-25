@@ -270,8 +270,14 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleReport applies a reputation change based on an exit's report about a
-// requester's behavior. The reporter must be an admitted, authenticated member
-// (reports are attributable — see backlog for rate-limiting/weighting).
+// requester's behavior. The reporter must be an admitted, authenticated member,
+// and may not report about itself (no self-farming/self-grief).
+//
+// NOTE: this does NOT yet make reputation grief-proof — a single blocked report
+// from any one admitted member already pushes a subject to the penalty floor.
+// Real resistance requires binding a report to a proven served session and/or
+// aggregating across independent reporters with anti-sybil admission. Tracked as
+// a follow-up (see docs/security-review.md F2).
 func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -288,6 +294,12 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, admitted := s.invites.AdmissionOf(req.Auth.PeerID); !admitted {
 		http.Error(w, "only admitted members may report", http.StatusForbidden)
+		return
+	}
+	// No self-attestation: a member can neither farm its own score nor grief
+	// itself.
+	if req.Subject == req.Auth.PeerID {
+		http.Error(w, "cannot report about yourself", http.StatusForbidden)
 		return
 	}
 	outcome, err := trust.ParseOutcome(req.Outcome)

@@ -15,7 +15,7 @@
 | 编号 | Issue | 严重度 | 概述 | 状态 |
 |---|---|---|---|---|
 | F1 | [#1](https://github.com/whatgate/whatgate/issues/1) | 🔴 HIGH | 出口 SSRF：可连内网/本机/云元数据 | ✅ fixed |
-| F2 | [#2](https://github.com/whatgate/whatgate/issues/2) | 🔴 HIGH | 声誉举报可被操纵，架空 `-min-reputation` | open |
+| F2 | [#2](https://github.com/whatgate/whatgate/issues/2) | 🔴 HIGH | 声誉举报可被操纵，架空 `-min-reputation` | 🟡 部分（自证拒绝+重放去重；完整修复待做） |
 | F3 | [#3](https://github.com/whatgate/whatgate/issues/3) | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | ✅ fixed |
 | F4 | [#4](https://github.com/whatgate/whatgate/issues/4) | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | ✅ fixed |
 | F5 | [#5](https://github.com/whatgate/whatgate/issues/5) | 🟠 MEDIUM | 协调面明文 HTTP，泄露邀请码/小网口令 | open |
@@ -65,6 +65,11 @@
 
 **修复**：把举报与一次真实出口会话绑定（出口对会话签发短票据，举报须附）；至少加
 (reporter, subject) 去重 + 限频 + 单方影响封顶；`served` 不应由被服务方自证。
+
+> 🟡 **部分修复**（`refs #2`）：已拒绝**自证举报**（`subject==reporter` → 403，堵死自养号/自黑）；
+> **重放去重**（F7）阻止同一签名重复计分。**但核心风险仍在**：单个已准入成员一条 `blocked` 举报
+> 就能把受害者压到惩罚下限（-10）过不了门槛——真正的抗操纵需要**举报绑定已证服务会话**（出口签发短票据）
+> 和/或**多举报者聚合 + 抗女巫准入**（一条举报 ≠ 立即触底），属较大协议改动，作为**后续项**保留在 issue #2。
 
 ---
 
