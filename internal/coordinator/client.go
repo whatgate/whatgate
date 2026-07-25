@@ -21,8 +21,11 @@ import (
 // the node (Join), advertises its presence (Register), and discovers exits
 // (Directory).
 type Client struct {
-	baseURL string
-	http    *http.Client
+	http *http.Client
+
+	epMu      sync.Mutex
+	endpoints []string // one or more coordinator base URLs (failover order)
+	current   int      // index of the last-known-reachable endpoint
 
 	// Signer produces the signed authentication attached to identity-proving
 	// requests (join/register). It must sign with the private key of the peer ID
@@ -44,10 +47,62 @@ type Client struct {
 // config). With no pinned key the client accepts the legacy unsigned directory.
 func (c *Client) SetPinnedKey(pub crypto.PubKey) { c.pinnedKey = pub }
 
-// NewClient creates a coordinator client targeting baseURL (e.g.
-// "http://coordinator.example:8080").
+// NewClient creates a coordinator client targeting a single baseURL (e.g.
+// "https://coordinator.example:8080").
 func NewClient(baseURL string) *Client {
-	return &Client{baseURL: baseURL, http: http.DefaultClient}
+	return NewClientEndpoints([]string{baseURL})
+}
+
+// NewClientEndpoints creates a client that fails over across several coordinator
+// base URLs. A request is tried against the last-known-reachable endpoint first;
+// on a connection-level failure (not an HTTP error response) it rotates to the
+// next. This survives the blocking of any single coordinator address. For real
+// independence the endpoints should span different fault domains (ASN / DNS host
+// / CDN / operator) — that is an operational property, not enforced here.
+func NewClientEndpoints(baseURLs []string) *Client {
+	eps := make([]string, 0, len(baseURLs))
+	for _, u := range baseURLs {
+		if u != "" {
+			eps = append(eps, u)
+		}
+	}
+	return &Client{http: http.DefaultClient, endpoints: eps}
+}
+
+// attempt runs do against each endpoint, starting from the last-known-reachable
+// one, rotating only when do reports a connection-level error (nil response). A
+// received HTTP response — even an error status — means the endpoint is
+// reachable, so the caller's business error is surfaced rather than masked by
+// failover. On success the reachable endpoint is remembered.
+func (c *Client) attempt(op string, do func(base string) (*http.Response, error)) (*http.Response, error) {
+	c.epMu.Lock()
+	start, eps := c.current, append([]string(nil), c.endpoints...)
+	c.epMu.Unlock()
+	if len(eps) == 0 {
+		return nil, fmt.Errorf("%s: no coordinator endpoint configured", op)
+	}
+
+	var lastErr error
+	for i := 0; i < len(eps); i++ {
+		idx := (start + i) % len(eps)
+		resp, err := do(eps[idx])
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		c.epMu.Lock()
+		c.current = idx
+		c.epMu.Unlock()
+		return resp, nil
+	}
+	return nil, fmt.Errorf("%s: all %d coordinator endpoints unreachable: %w", op, len(eps), lastErr)
+}
+
+// get performs a failover-aware GET of pathAndQuery (e.g. "/directory?from=x").
+func (c *Client) get(op, pathAndQuery string) (*http.Response, error) {
+	return c.attempt(op, func(base string) (*http.Response, error) {
+		return c.http.Get(base + pathAndQuery)
+	})
 }
 
 func (c *Client) sign(action string) (authn.SignedAuth, error) {
@@ -97,11 +152,11 @@ func (c *Client) Directory() ([]NodeInfo, error) {
 // it as the tierOf lookup for trust-scoped exit selection. Pass from="" to skip
 // annotation (all tiers default to stranger).
 func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, error) {
-	u := c.baseURL + "/directory"
+	path := "/directory"
 	if from != "" {
-		u += "?from=" + url.QueryEscape(from)
+		path += "?from=" + url.QueryEscape(from)
 	}
-	resp, err := c.http.Get(u)
+	resp, err := c.get("GET /directory", path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -185,7 +240,7 @@ func (c *Client) ReportOutcome(subject string, outcome trust.Outcome) error {
 
 // ReputationOf returns a peer's current reputation score.
 func (c *Client) ReputationOf(peerID string) (int, error) {
-	resp, err := c.http.Get(c.baseURL + "/reputation?peer=" + url.QueryEscape(peerID))
+	resp, err := c.get("GET /reputation", "/reputation?peer="+url.QueryEscape(peerID))
 	if err != nil {
 		return 0, err
 	}
@@ -203,8 +258,7 @@ func (c *Client) ReputationOf(peerID string) (int, error) {
 // TrustBetween returns the trust tier from one peer toward another, as computed
 // by the coordinator's authoritative graph.
 func (c *Client) TrustBetween(from, to string) (trust.Tier, error) {
-	u := c.baseURL + "/trust?from=" + url.QueryEscape(from) + "&to=" + url.QueryEscape(to)
-	resp, err := c.http.Get(u)
+	resp, err := c.get("GET /trust", "/trust?from="+url.QueryEscape(from)+"&to="+url.QueryEscape(to))
 	if err != nil {
 		return 0, err
 	}
@@ -221,7 +275,7 @@ func (c *Client) TrustBetween(from, to string) (trust.Tier, error) {
 
 // GroupsOf returns the groups a peer belongs to.
 func (c *Client) GroupsOf(peerID string) ([]string, error) {
-	resp, err := c.http.Get(c.baseURL + "/groups?peer=" + url.QueryEscape(peerID))
+	resp, err := c.get("GET /groups", "/groups?peer="+url.QueryEscape(peerID))
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +325,7 @@ var ErrNoRelay = errors.New("coordinator: no relay configured")
 
 // Relay fetches the coordinator's advertised relay, or ErrNoRelay if absent.
 func (c *Client) Relay() (RelayInfo, error) {
-	resp, err := c.http.Get(c.baseURL + "/relay")
+	resp, err := c.get("GET /relay", "/relay")
 	if err != nil {
 		return RelayInfo{}, err
 	}
@@ -296,7 +350,12 @@ func (c *Client) postJSON(path string, body, out any) error {
 	if err != nil {
 		return err
 	}
-	resp, err := c.http.Post(c.baseURL+path, "application/json", bytes.NewReader(buf))
+	// Failover only happens on connection-level errors, i.e. before the request
+	// reaches a coordinator — so a write is never re-applied by an endpoint that
+	// already received it. A fresh reader is built per attempt.
+	resp, err := c.attempt("POST "+path, func(base string) (*http.Response, error) {
+		return c.http.Post(base+path, "application/json", bytes.NewReader(buf))
+	})
 	if err != nil {
 		return err
 	}

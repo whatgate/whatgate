@@ -61,7 +61,7 @@ func main() {
 	asExit := flag.Bool("exit", false, "act as an exit node for other peers (serves their traffic)")
 	connect := flag.String("connect", "", "exit peer multiaddr to tunnel through (manual client mode)")
 	socksAddr := flag.String("socks", "127.0.0.1:1080", "local SOCKS5 listen address (client mode)")
-	coordURL := flag.String("coordinator", "", "coordinator base URL, e.g. https://host:8080")
+	coordURL := flag.String("coordinator", "", "coordinator base URL(s), comma-separated for failover, e.g. https://a:8080,https://b:8080")
 	coordKey := flag.String("coordinator-key", "", "pinned coordinator public key (base64, printed by the coordinator): the directory must be signed by it, else it is rejected — defeats a rogue/MITM coordinator")
 	invite := flag.String("invite", "", "invite code to redeem when joining via coordinator")
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
@@ -101,7 +101,11 @@ func main() {
 
 	var coord *coordinator.Client
 	if *coordURL != "" {
-		coord = coordinator.NewClient(*coordURL)
+		endpoints := splitEndpoints(*coordURL)
+		coord = coordinator.NewClientEndpoints(endpoints)
+		if len(endpoints) > 1 {
+			fmt.Printf("coordinator endpoints: %d (failover)\n", len(endpoints))
+		}
 		// Pin the coordinator's signing key so the directory it returns must be
 		// signed by that key — a reachable-but-rogue endpoint can't inject a
 		// poisoned directory. Distributed out of band (printed by the coordinator).
@@ -117,8 +121,11 @@ func main() {
 		}
 		// TLS carries the control plane's confidentiality; without it, which exits
 		// you ask about is observable and the endpoint is easy to SNI/DNS-block.
-		if strings.HasPrefix(*coordURL, "http://") {
-			fmt.Println("WARNING: coordinator URL is plaintext http://; use https:// (or a TLS-terminating proxy) so control-plane metadata isn't exposed")
+		for _, ep := range endpoints {
+			if strings.HasPrefix(ep, "http://") {
+				fmt.Println("WARNING: a coordinator URL is plaintext http://; use https:// (or a TLS-terminating proxy) so control-plane metadata isn't exposed")
+				break
+			}
 		}
 		// Configure the coordinator's relay as a fallback path, if it advertises
 		// one, so this node stays reachable when hole punching fails.
@@ -688,6 +695,18 @@ func splitCSV(s string) []string {
 }
 
 // parsePeer turns a /p2p/ multiaddr string into an AddrInfo.
+// splitEndpoints parses a comma-separated coordinator flag into trimmed,
+// non-empty base URLs used for failover.
+func splitEndpoints(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func parsePeer(s string) (peer.AddrInfo, error) {
 	maddr, err := multiaddr.NewMultiaddr(s)
 	if err != nil {
