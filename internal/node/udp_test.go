@@ -126,7 +126,10 @@ func TestGuardedUDPExitEnforcesPolicy(t *testing.T) {
 		t.Fatalf("new exit: %v", err)
 	}
 	t.Cleanup(func() { _ = exitNode.Close() })
-	guard := exit.NewGuard(exit.Policy{Scope: trust.ScopeOpen, BlockedPorts: map[int]bool{portB: true}})
+	// AllowPrivateTargets: the loopback echo servers stand in for public
+	// destinations; this test exercises the port policy, not the SSRF guard
+	// (covered separately in TestGuardedUDPExitBlocksPrivateTarget).
+	guard := exit.NewGuard(exit.Policy{Scope: trust.ScopeOpen, BlockedPorts: map[int]bool{portB: true}, AllowPrivateTargets: true})
 	exitNode.EnableGuardedUDPExit(GuardedExit{
 		Guard:  guard,
 		TierOf: func(string) trust.Tier { return trust.TierStranger },
@@ -160,5 +163,48 @@ func TestGuardedUDPExitEnforcesPolicy(t *testing.T) {
 	}
 	if _, timedOut := receiveTimeout(sess, 2*time.Second); !timedOut {
 		t.Fatal("blocked target should have produced no reply")
+	}
+}
+
+// TestGuardedUDPExitBlocksPrivateTarget checks the default SSRF guard: a UDP
+// exit with AllowPrivateTargets=false drops datagrams aimed at a loopback
+// address (which stands in for the operator's LAN/localhost/metadata).
+func TestGuardedUDPExitBlocksPrivateTarget(t *testing.T) {
+	echo := startUDPEcho(t) // a 127.0.0.1 address — disallowed by default
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	exitNode, err := New(ctx, WithListenAddrs("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("new exit: %v", err)
+	}
+	t.Cleanup(func() { _ = exitNode.Close() })
+	// Default policy: AllowPrivateTargets is false.
+	guard := exit.NewGuard(exit.Policy{Scope: trust.ScopeOpen})
+	exitNode.EnableGuardedUDPExit(GuardedExit{
+		Guard:  guard,
+		TierOf: func(string) trust.Tier { return trust.TierStranger },
+	})
+
+	client, err := New(ctx, WithListenAddrs("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if err := client.Connect(ctx, exitNode.AddrInfo()); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	sess, err := client.OpenUDPSession(ctx, exitNode.ID())
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	if err := sess.Send(echo, []byte("x")); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, timedOut := receiveTimeout(sess, 2*time.Second); !timedOut {
+		t.Fatal("private (loopback) target should have been blocked — no reply expected")
 	}
 }

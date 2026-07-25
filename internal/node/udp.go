@@ -10,6 +10,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	libp2pprotocol "github.com/libp2p/go-libp2p/core/protocol"
 
+	"github.com/whatgate/whatgate/internal/exit"
 	"github.com/whatgate/whatgate/pkg/protocol"
 )
 
@@ -27,20 +28,22 @@ type UDPAuthorizer func(target string) (release func(), err error)
 // EnableUDPExit relays UDP datagrams for others without policy (allow all).
 func (n *Node) EnableUDPExit() {
 	n.h.SetStreamHandler(UDPTunnelProtocol, func(s network.Stream) {
-		relayUDP(streamConn{s}, nil)
+		relayUDP(streamConn{s}, nil, false)
 	})
 }
 
 // EnableGuardedUDPExit relays UDP datagrams, authorizing each new target through
 // cfg.Guard (same policy as the TCP exit: trust scope, reputation, port/domain,
-// concurrency).
+// concurrency). Hostname targets are additionally re-checked against their
+// resolved IP so DNS names pointing at internal ranges are dropped (SSRF guard).
 func (n *Node) EnableGuardedUDPExit(cfg GuardedExit) {
 	authorize := cfg.authorizer()
+	blockPrivate := cfg.Guard != nil && !cfg.Guard.AllowsPrivateTargets()
 	n.h.SetStreamHandler(UDPTunnelProtocol, func(s network.Stream) {
 		requesterID := s.Conn().RemotePeer().String()
 		relayUDP(streamConn{s}, func(target string) (func(), error) {
 			return authorize(requesterID, target)
-		})
+		}, blockPrivate)
 	})
 }
 
@@ -58,7 +61,7 @@ type udpTarget struct {
 // (NAT-like), sending each framed datagram out and framing replies back. If
 // authorize is non-nil, each new target must pass it (denied targets are
 // dropped).
-func relayUDP(stream net.Conn, authorize UDPAuthorizer) {
+func relayUDP(stream net.Conn, authorize UDPAuthorizer, blockPrivate bool) {
 	defer stream.Close()
 
 	var wmu sync.Mutex
@@ -101,6 +104,16 @@ func relayUDP(stream net.Conn, authorize UDPAuthorizer) {
 			}
 			uaddr, err := net.ResolveUDPAddr("udp", target)
 			if err != nil {
+				if release != nil {
+					release()
+				}
+				cmu.Unlock()
+				continue
+			}
+			// SSRF guard: drop datagrams to a target that resolves into a
+			// private/loopback/link-local range (catches hostnames; IP literals
+			// are already refused by the guard's Authorize).
+			if blockPrivate && exit.DisallowedTargetIP(uaddr.IP) {
 				if release != nil {
 					release()
 				}

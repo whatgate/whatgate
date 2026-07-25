@@ -73,6 +73,7 @@ func main() {
 	blockDomains := flag.String("block-domains", "", "ExitGuard: destination domains to block, comma-separated")
 	maxConns := flag.Int("max-conns", 0, "ExitGuard: max concurrent connections to serve as exit (0 = unlimited)")
 	minReputation := flag.Int("min-reputation", -1_000_000_000, "ExitGuard: refuse requesters whose reputation is below this (default effectively disabled)")
+	allowPrivateTargets := flag.Bool("allow-private-targets", false, "ExitGuard: allow serving requests to private/loopback/link-local addresses (default false blocks SSRF to your LAN, localhost, and cloud metadata)")
 	auditLog := flag.String("audit-log", "", "ExitGuard: append a JSON-lines record of served/denied requests to this file (accountability)")
 	threatFeed := flag.String("threat-feed", "", "ExitGuard: URL or file of known-malicious domains to block (merged with -block-domains)")
 	threatFeedInterval := flag.Duration("threat-feed-interval", time.Hour, "how often to refresh -threat-feed (0 = fetch once at startup)")
@@ -151,11 +152,14 @@ func main() {
 		isExitOn func() bool
 	)
 	{
+		// SSRF guard: block dialing private/loopback/metadata targets at connect
+		// time (after DNS resolution, so hostname→internal rebinding is caught too),
+		// unless the operator opts in with -allow-private-targets.
 		dial := func(ctx context.Context, addr string) (net.Conn, error) {
-			var d net.Dialer
+			d := net.Dialer{Control: exit.DialControl(*allowPrivateTargets)}
 			return d.DialContext(ctx, "tcp", addr)
 		}
-		policy, err := buildExitPolicy(*exitScope, *blockPorts, *blockDomains, *maxConns, *minReputation)
+		policy, err := buildExitPolicy(*exitScope, *blockPorts, *blockDomains, *maxConns, *minReputation, *allowPrivateTargets)
 		if err != nil {
 			log.Fatalf("exit policy: %v", err)
 		}
@@ -626,7 +630,7 @@ func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n
 
 // buildExitPolicy assembles an ExitGuard policy from CLI flags. SMTP ports are
 // always blocked by default; -block-ports adds to them.
-func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns, minReputation int) (exit.Policy, error) {
+func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns, minReputation int, allowPrivate bool) (exit.Policy, error) {
 	scope, err := trust.ParseScope(scopeStr)
 	if err != nil {
 		return exit.Policy{}, err
@@ -647,6 +651,7 @@ func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns, minReputat
 		BlockedPorts:           ports,
 		BlockedDomains:         domains,
 		MaxConns:               maxConns,
+		AllowPrivateTargets:    allowPrivate,
 	}, nil
 }
 

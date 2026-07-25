@@ -244,7 +244,7 @@ func (cfg GuardedExit) authorizer() func(requesterID, target string) (func(), er
 			switch {
 			case err == nil:
 				cfg.Report(requesterID, trust.OutcomeServed)
-			case errors.Is(err, exit.ErrBlockedDomain), errors.Is(err, exit.ErrBlockedPort):
+			case errors.Is(err, exit.ErrBlockedDomain), errors.Is(err, exit.ErrBlockedPort), errors.Is(err, exit.ErrBlockedPrivateTarget):
 				cfg.Report(requesterID, trust.OutcomeBlocked)
 			}
 		}

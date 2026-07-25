@@ -8,6 +8,7 @@ package exit
 
 import (
 	"errors"
+	"net"
 	"sync"
 
 	"github.com/whatgate/whatgate/internal/trust"
@@ -15,11 +16,12 @@ import (
 
 // Guard decisions.
 var (
-	ErrUntrustedRequester = errors.New("exit: requester outside trust scope")
-	ErrLowReputation      = errors.New("exit: requester reputation below threshold")
-	ErrBlockedPort        = errors.New("exit: destination port blocked by policy")
-	ErrBlockedDomain      = errors.New("exit: destination domain blocked by policy")
-	ErrTooManyConns       = errors.New("exit: connection limit reached")
+	ErrUntrustedRequester   = errors.New("exit: requester outside trust scope")
+	ErrLowReputation        = errors.New("exit: requester reputation below threshold")
+	ErrBlockedPort          = errors.New("exit: destination port blocked by policy")
+	ErrBlockedDomain        = errors.New("exit: destination domain blocked by policy")
+	ErrBlockedPrivateTarget = errors.New("exit: destination is a private/loopback/link-local address")
+	ErrTooManyConns         = errors.New("exit: connection limit reached")
 )
 
 // DefaultBlockedPorts returns ports an exit should refuse by default (e.g. SMTP,
@@ -39,6 +41,10 @@ type Policy struct {
 	BlockedPorts           map[int]bool    // destination ports to refuse
 	BlockedDomains         map[string]bool // destination hosts to refuse
 	MaxConns               int             // max concurrent served connections (0 = unlimited)
+	// AllowPrivateTargets, when true, permits dialing private/loopback/link-local
+	// destinations. Default false blocks them (SSRF protection) — see
+	// DisallowedTargetIP and DialControl.
+	AllowPrivateTargets bool
 }
 
 // Request describes one exit attempt to authorize.
@@ -68,6 +74,11 @@ func NewGuard(p Policy) *Guard {
 	}
 	return &Guard{policy: p, blockedDomains: bd}
 }
+
+// AllowsPrivateTargets reports whether the policy permits dialing
+// private/loopback targets (used by the UDP path to decide post-resolution
+// filtering).
+func (g *Guard) AllowsPrivateTargets() bool { return g.policy.AllowPrivateTargets }
 
 // StaticBlockedDomains returns a copy of the operator-configured blocked domains
 // (the baseline to merge a threat feed onto).
@@ -107,6 +118,14 @@ func (g *Guard) Authorize(req Request) (release func(), err error) {
 	}
 	if g.isDomainBlocked(req.Host) {
 		return nil, ErrBlockedDomain
+	}
+	// SSRF guard for IP-literal targets. Hostname targets are additionally
+	// checked at dial time against their resolved IP (see DialControl), which
+	// also defeats DNS rebinding.
+	if !g.policy.AllowPrivateTargets {
+		if ip := net.ParseIP(req.Host); ip != nil && DisallowedTargetIP(ip) {
+			return nil, ErrBlockedPrivateTarget
+		}
 	}
 
 	g.mu.Lock()

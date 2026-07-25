@@ -109,6 +109,7 @@ node -coordinator http://host:8080 -invite welcome -exit -region JP \
 - SMTP 端口（25/465/587）默认封禁；`-block-ports` 追加
 - `-block-domains`：目标域名黑名单
 - `-max-conns`：最大并发连接数
+- **SSRF 防护（默认开启）**：出口默认拒绝连接私有/环回/链路本地地址（你的 LAN、`127.0.0.1`、云元数据 `169.254.169.254`）——IP 字面量在授权时拒，域名在拨号后按解析到的真实 IP 拒（防 DNS rebinding）；确需时用 `-allow-private-targets` 放开
 - `-min-reputation`：拒绝声誉低于阈值的请求方（滥用者访问被封目标会被扣分，随后被各出口拒服务；默认禁用）
 - `-audit-log <file>`：把每次服务/拒绝（时间/请求方/目标/结果）以 JSON Lines 追加落盘，供事后追责
 - `-threat-feed <url|file>`：拉取已知恶意域名清单并入黑名单，定期刷新（`-threat-feed-interval`）

@@ -14,7 +14,7 @@
 
 | 编号 | Issue | 严重度 | 概述 | 状态 |
 |---|---|---|---|---|
-| F1 | [#1](https://github.com/whatgate/whatgate/issues/1) | 🔴 HIGH | 出口 SSRF：可连内网/本机/云元数据 | open |
+| F1 | [#1](https://github.com/whatgate/whatgate/issues/1) | 🔴 HIGH | 出口 SSRF：可连内网/本机/云元数据 | ✅ fixed |
 | F2 | [#2](https://github.com/whatgate/whatgate/issues/2) | 🔴 HIGH | 声誉举报可被操纵，架空 `-min-reputation` | open |
 | F3 | [#3](https://github.com/whatgate/whatgate/issues/3) | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | open |
 | F4 | [#4](https://github.com/whatgate/whatgate/issues/4) | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | open |
@@ -42,6 +42,12 @@
 **修复**：在 `Guard.Authorize` 加目标校验——若 Host 是 IP 字面量，拒绝私有/环回/链路本地/
 `169.254.169.254`/ULA；若是域名，**在出口 Dial 后校验解析到的 IP**（防 DNS rebinding / 指向内网的域名）。
 加 `Policy.AllowPrivateTargets bool`（默认 false）。UDP 侧 `relayUDP` 同样把关。
+
+> ✅ **已修复**（commit 见 `Fixes #1`）：新增 `exit.DisallowedTargetIP`（环回/私有/链路本地/ULA/
+> unspecified/multicast）+ `exit.DialControl`（net.Dialer.Control 拨号时按解析 IP 拒，含 rebinding）；
+> `Policy.AllowPrivateTargets`（默认 false）；`Guard.Authorize` 拒 IP 字面量私网目标；UDP `relayUDP`
+> 解析后按真实 IP 拒；cmd `-allow-private-targets`。测试：`DisallowedTargetIP` 表驱动、guard IP 字面量拒/
+> 公网放/opt-in 放行、UDP 环回目标被丢。
 
 ---
 
