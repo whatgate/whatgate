@@ -17,12 +17,13 @@ import (
 
 // Guard decisions.
 var (
-	ErrUntrustedRequester   = errors.New("exit: requester outside trust scope")
-	ErrLowReputation        = errors.New("exit: requester reputation below threshold")
-	ErrBlockedPort          = errors.New("exit: destination port blocked by policy")
-	ErrBlockedDomain        = errors.New("exit: destination domain blocked by policy")
-	ErrBlockedPrivateTarget = errors.New("exit: destination is a private/loopback/link-local address")
-	ErrTooManyConns         = errors.New("exit: connection limit reached")
+	ErrUntrustedRequester    = errors.New("exit: requester outside trust scope")
+	ErrLowReputation         = errors.New("exit: requester reputation below threshold")
+	ErrBlockedPort           = errors.New("exit: destination port blocked by policy")
+	ErrBlockedDomain         = errors.New("exit: destination domain blocked by policy")
+	ErrBlockedPrivateTarget  = errors.New("exit: destination is a private/loopback/link-local address")
+	ErrTooManyConns          = errors.New("exit: connection limit reached")
+	ErrTooManyRequesterConns = errors.New("exit: per-requester connection limit reached")
 )
 
 // DefaultBlockedPorts returns ports an exit should refuse by default (e.g. SMTP,
@@ -42,6 +43,7 @@ type Policy struct {
 	BlockedPorts           map[int]bool    // destination ports to refuse
 	BlockedDomains         map[string]bool // destination hosts to refuse
 	MaxConns               int             // max concurrent served connections (0 = unlimited)
+	MaxConnsPerRequester   int             // max concurrent connections per requester (0 = unlimited)
 	// AllowPrivateTargets, when true, permits dialing private/loopback/link-local
 	// destinations. Default false blocks them (SSRF protection) — see
 	// DisallowedTargetIP and DialControl.
@@ -50,6 +52,7 @@ type Policy struct {
 
 // Request describes one exit attempt to authorize.
 type Request struct {
+	RequesterID         string // peer ID of the requester (for per-requester limits)
 	RequesterTier       trust.Tier
 	RequesterReputation int
 	Host                string
@@ -62,6 +65,7 @@ type Guard struct {
 
 	mu     sync.Mutex
 	active int
+	perReq map[string]int // active connections per requester ID
 
 	domMu          sync.RWMutex
 	blockedDomains map[string]bool // normalized domains (static policy + threat feed)
@@ -70,7 +74,7 @@ type Guard struct {
 
 // NewGuard creates a Guard for the given policy.
 func NewGuard(p Policy) *Guard {
-	g := &Guard{policy: p}
+	g := &Guard{policy: p, perReq: make(map[string]int)}
 	g.blockedDomains, g.blockedNets = parseBlockSet(p.BlockedDomains)
 	return g
 }
@@ -192,13 +196,21 @@ func (g *Guard) Authorize(req Request) (release func(), err error) {
 	if g.policy.MaxConns > 0 && g.active >= g.policy.MaxConns {
 		return nil, ErrTooManyConns
 	}
+	if g.policy.MaxConnsPerRequester > 0 && g.perReq[req.RequesterID] >= g.policy.MaxConnsPerRequester {
+		return nil, ErrTooManyRequesterConns
+	}
 	g.active++
+	g.perReq[req.RequesterID]++
 
+	id := req.RequesterID
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			g.mu.Lock()
 			g.active--
+			if g.perReq[id]--; g.perReq[id] <= 0 {
+				delete(g.perReq, id)
+			}
 			g.mu.Unlock()
 		})
 	}, nil

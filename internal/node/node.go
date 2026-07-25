@@ -235,6 +235,7 @@ func (cfg GuardedExit) authorizer() func(requesterID, target string) (func(), er
 			rep = cfg.RepOf(requesterID)
 		}
 		release, err := cfg.Guard.Authorize(exit.Request{
+			RequesterID:         requesterID,
 			RequesterTier:       cfg.TierOf(requesterID),
 			RequesterReputation: rep,
 			Host:                host,
@@ -259,6 +260,15 @@ func (cfg GuardedExit) authorizer() func(requesterID, target string) (func(), er
 	}
 }
 
+// exitServeOptions are the exit's connection-lifecycle limits, applied to every
+// served stream to protect against slow/hung/idle peers (see ExitGuard / SECURITY).
+var exitServeOptions = tunnel.Options{
+	TargetReadTimeout: 10 * time.Second,
+	DialTimeout:       15 * time.Second,
+	// IdleTimeout left 0: long active transfers must not be cut; single-peer
+	// resource exhaustion is bounded by the guard's per-requester cap instead.
+}
+
 // setExitHandler registers the tunnel stream handler, tracking exit load and
 // applying an optional per-request authorizer (ExitGuard).
 func (n *Node) setExitHandler(dial tunnel.DialFunc, authWithRequester func(requesterID, target string) (func(), error)) {
@@ -273,7 +283,7 @@ func (n *Node) setExitHandler(dial tunnel.DialFunc, authWithRequester func(reque
 				return authWithRequester(requesterID, target)
 			}
 		}
-		_ = tunnel.ServeExit(streamConn{s}, authorize, dial)
+		_ = tunnel.ServeExit(streamConn{s}, authorize, dial, exitServeOptions)
 	})
 }
 

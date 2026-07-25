@@ -135,6 +135,35 @@ func TestAuthorizeAllowPrivateTargetsBypass(t *testing.T) {
 	release()
 }
 
+func TestAuthorizeEnforcesPerRequesterCap(t *testing.T) {
+	g := NewGuard(Policy{Scope: trust.ScopeOpen, MaxConnsPerRequester: 1})
+	reqA := Request{RequesterID: "peerA", RequesterTier: trust.TierStranger, Host: "example.com", Port: 443}
+	reqB := Request{RequesterID: "peerB", RequesterTier: trust.TierStranger, Host: "example.com", Port: 443}
+
+	relA, err := g.Authorize(reqA)
+	if err != nil {
+		t.Fatalf("A first: %v", err)
+	}
+	// Same requester's second concurrent conn is refused...
+	if _, err := g.Authorize(reqA); err != ErrTooManyRequesterConns {
+		t.Fatalf("A second err = %v, want ErrTooManyRequesterConns", err)
+	}
+	// ...but a different requester is unaffected.
+	relB, err := g.Authorize(reqB)
+	if err != nil {
+		t.Fatalf("B first: %v", err)
+	}
+	relB()
+
+	// After A releases, A can connect again.
+	relA()
+	if rel, err := g.Authorize(reqA); err != nil {
+		t.Fatalf("A after release: %v", err)
+	} else {
+		rel()
+	}
+}
+
 func TestAuthorizeAllowsAndReleases(t *testing.T) {
 	g := NewGuard(Policy{Scope: trust.ScopeOpen})
 

@@ -17,7 +17,7 @@
 | F1 | [#1](https://github.com/whatgate/whatgate/issues/1) | 🔴 HIGH | 出口 SSRF：可连内网/本机/云元数据 | ✅ fixed |
 | F2 | [#2](https://github.com/whatgate/whatgate/issues/2) | 🔴 HIGH | 声誉举报可被操纵，架空 `-min-reputation` | open |
 | F3 | [#3](https://github.com/whatgate/whatgate/issues/3) | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | ✅ fixed |
-| F4 | [#4](https://github.com/whatgate/whatgate/issues/4) | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | open |
+| F4 | [#4](https://github.com/whatgate/whatgate/issues/4) | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | ✅ fixed |
 | F5 | [#5](https://github.com/whatgate/whatgate/issues/5) | 🟠 MEDIUM | 协调面明文 HTTP，泄露邀请码/小网口令 | open |
 | F6 | [#6](https://github.com/whatgate/whatgate/issues/6) | 🟡 LOW-MED | 协调器 JSON 端点无请求体大小限制 | open |
 | F7 | [#7](https://github.com/whatgate/whatgate/issues/7) | 🟡 LOW | 2 分钟重放窗口，无 nonce | open |
@@ -96,6 +96,12 @@
 
 **修复**：读 target 用 `SetReadDeadline`（数秒）；`dial` 用 `context.WithTimeout`；`pipe` 加空闲超时；
 `Policy` 加每-requester 并发上限。
+
+> ✅ **已修复**（`Fixes #4`）：`tunnel.Options{TargetReadTimeout, DialTimeout, IdleTimeout}`——出口默认
+> `TargetReadTimeout=10s`（杀 slowloris 前置阻塞）、`DialTimeout=15s`（杀挂死拨号）；`copyIdle` 支持空闲
+> 超时（默认 0=不切，避免误杀长传输）。`Policy.MaxConnsPerRequester` + `Guard` 每-requester 计数
+> （`ErrTooManyRequesterConns`），单 peer 无法耗尽出口；cmd `-max-conns-per-requester`。测试：目标读超时/
+> 拨号超时/每-requester 上限与释放后恢复。
 
 ---
 

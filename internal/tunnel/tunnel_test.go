@@ -42,7 +42,7 @@ func TestServeExitDialsTargetAndPipes(t *testing.T) {
 	clientEnd, exitEnd := net.Pipe()
 	t.Cleanup(func() { _ = clientEnd.Close() })
 
-	go func() { _ = ServeExit(exitEnd, nil, dial) }()
+	go func() { _ = ServeExit(exitEnd, nil, dial, Options{}) }()
 
 	done := make(chan error, 1)
 	go func() {
@@ -78,6 +78,54 @@ func TestServeExitDialsTargetAndPipes(t *testing.T) {
 
 	if dialed != "example.com:80" {
 		t.Fatalf("exit dialed %q want %q", dialed, "example.com:80")
+	}
+}
+
+// TestServeExitTargetReadTimeout: a peer that opens the stream but never sends a
+// full target must not hold the exit — ServeExit returns once the deadline hits.
+func TestServeExitTargetReadTimeout(t *testing.T) {
+	dial := func(ctx context.Context, addr string) (net.Conn, error) {
+		t.Error("dial should not be reached when the target never arrives")
+		return nil, nil
+	}
+	clientEnd, exitEnd := net.Pipe()
+	t.Cleanup(func() { _ = clientEnd.Close() })
+
+	done := make(chan error, 1)
+	go func() { done <- ServeExit(exitEnd, nil, dial, Options{TargetReadTimeout: 200 * time.Millisecond}) }()
+
+	// Client sends nothing.
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a timeout error, got nil")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ServeExit did not return after the target-read timeout")
+	}
+}
+
+// TestServeExitDialTimeout: a target that never connects must not hang the exit.
+func TestServeExitDialTimeout(t *testing.T) {
+	dial := func(ctx context.Context, addr string) (net.Conn, error) {
+		<-ctx.Done() // never connects; wait for the dial timeout
+		return nil, ctx.Err()
+	}
+	clientEnd, exitEnd := net.Pipe()
+	t.Cleanup(func() { _ = clientEnd.Close() })
+
+	done := make(chan error, 1)
+	go func() { done <- ServeExit(exitEnd, nil, dial, Options{DialTimeout: 200 * time.Millisecond}) }()
+
+	go func() { _ = protocol.WriteTarget(clientEnd, "example.com:80") }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a dial timeout error, got nil")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ServeExit did not return after the dial timeout")
 	}
 }
 
