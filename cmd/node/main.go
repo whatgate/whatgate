@@ -26,6 +26,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -74,6 +75,9 @@ func main() {
 	tunMode := flag.Bool("tun", false, "route ALL system traffic through the tunnel via a TUN device (needs -tags tun build, admin, and wintun.dll on Windows)")
 	tunDevice := flag.String("tun-device", "whatgate0", "TUN adapter name (TUN mode)")
 	tunMTU := flag.Int("tun-mtu", 1500, "TUN interface MTU (TUN mode)")
+	tunAutoRoute := flag.Bool("tun-auto-route", false, "TUN mode: automatically assign the TUN IP, redirect the default route, and exclude the node's own coordinator/exit traffic (needs admin/root; restored on exit)")
+	tunAddr := flag.String("tun-addr", "10.6.7.1", "TUN mode: IP to assign the TUN interface when -tun-auto-route is set")
+	tunGateway := flag.String("tun-gateway", "", "TUN mode: physical default gateway for -tun-auto-route exclusions (auto-detected if empty)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -386,6 +390,48 @@ func main() {
 		}
 		defer tun.Stop()
 		fmt.Printf("TUN mode: ENABLED on %s → SOCKS %s (all system traffic routed through the tunnel)\n", *tunDevice, *socksAddr)
+
+		// Auto-routing: assign the TUN IP, redirect the default route into it,
+		// and pin the node's own control/data-plane connections to the physical
+		// gateway so the tunnel doesn't capture its own packets and loop.
+		if *tunAutoRoute {
+			gw := *tunGateway
+			if gw == "" {
+				detected, err := tun.DefaultGateway()
+				if err != nil {
+					log.Fatalf("tun auto-route: %v (pass -tun-gateway to set it manually)", err)
+				}
+				gw = detected
+			}
+			// Exclude the coordinator (control plane) and the manual exit peer
+			// (data plane). Relayed/discovered peers still rely on tun2socks
+			// binding to the physical interface to avoid the loop.
+			var selfRefs []string
+			if *coordURL != "" {
+				if u, err := url.Parse(*coordURL); err == nil {
+					selfRefs = append(selfRefs, u.Host)
+				}
+			}
+			selfRefs = append(selfRefs, connectHostIPs(*connect)...)
+			excludes := tun.HostIPs(selfRefs...)
+
+			routeCfg := tun.RouteConfig{
+				Device:   *tunDevice,
+				TUNAddr:  *tunAddr,
+				Gateway:  gw,
+				Excludes: excludes,
+			}
+			if err := tun.ApplyUp(routeCfg); err != nil {
+				_ = tun.ApplyDown(routeCfg)
+				log.Fatalf("tun auto-route: %v", err)
+			}
+			defer func() {
+				if err := tun.ApplyDown(routeCfg); err != nil {
+					log.Printf("tun auto-route teardown: %v", err)
+				}
+			}()
+			fmt.Printf("TUN auto-route: default route → %s, gateway %s, %d self-exclusion(s)\n", *tunAddr, gw, len(excludes))
+		}
 	}
 
 	// Local status dashboard.
@@ -615,4 +661,23 @@ func parsePeer(s string) (peer.AddrInfo, error) {
 		return peer.AddrInfo{}, err
 	}
 	return *ai, nil
+}
+
+// connectHostIPs pulls the host references (ip4/ip6/dns) out of a manual
+// -connect multiaddr so TUN auto-routing can exclude the exit peer's traffic.
+func connectHostIPs(connect string) []string {
+	if connect == "" {
+		return nil
+	}
+	maddr, err := multiaddr.NewMultiaddr(connect)
+	if err != nil {
+		return nil
+	}
+	var refs []string
+	for _, p := range []int{multiaddr.P_IP4, multiaddr.P_IP6, multiaddr.P_DNS, multiaddr.P_DNS4, multiaddr.P_DNS6} {
+		if v, err := maddr.ValueForProtocol(p); err == nil && v != "" {
+			refs = append(refs, v)
+		}
+	}
+	return refs
 }

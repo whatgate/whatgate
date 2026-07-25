@@ -36,22 +36,31 @@ go build -tags tun -o bin/node-tun ./cmd/node
 先确保节点处于客户端模式（有本地 SOCKS 在跑），再开 TUN：
 
 ```bash
-# 例：经协调器发现 JP 出口，同时开全局 TUN
+# 例：经协调器发现 JP 出口，同时开全局 TUN + 自动路由
 sudo ./node-tun -coordinator http://host:8080 -invite welcome \
      -to JP -trust-scope open -socks 127.0.0.1:1080 \
-     -tun -tun-device whatgate0
+     -tun -tun-device whatgate0 -tun-auto-route
 ```
 
-平台前置条件与路由配置（**tun2socks 只负责收发包，不自动配路由**）：
+**自动路由（`-tun-auto-route`，推荐）**：由 `internal/tun` 自动下发路由，免手动 `route add`。它会：
 
-- **Windows**：把 `wintun.dll`（[wintun.net](https://www.wintun.net/)，与 CPU 架构匹配）放在二进制旁；以管理员运行。创建适配器后需给它配 IP 并把默认路由指向它（`netsh interface ip set address ...` / `route add`），同时给协调器与出口的直连流量加**排除路由**（否则隧道自身流量也被卷进 TUN，形成回环）。
-- **Linux**：`ip addr add`/`ip route`/`ip rule` 配置 TUN 及策略路由；出口/协调器地址走原网关。
-- **macOS**：`utun` 设备 + `ifconfig`/`route`。
+1. 给 TUN 网卡分配 IP（`-tun-addr`，默认 `10.6.7.1`）；
+2. 以两个 `/1` 半段（`0.0.0.0/1` + `128.0.0.0/1`）抢占默认路由——比系统默认路由更具体，故直接生效且**不删除**原默认路由，便于退出时干净还原；
+3. 把**协调器**与 `-connect` **出口**的 IP 钉在物理网关（`-tun-gateway`，留空则自动探测），防止隧道捕获自身控制/数据面流量而回环；
+4. 进程退出（Ctrl+C）时自动还原路由。
 
-> 关键坑：**出口节点与协调器的连接必须绕开 TUN**（排除路由/分流），否则隧道流量被自己捕获会死循环。生产实现应在 `internal/tun` 里自动下发这些排除路由（当前留给运行者手动配置，属待增强项）。
+> 排除范围仅覆盖协调器 + 手动 `-connect` 出口。经中继/自动发现的对端仍依赖 tun2socks 绑定物理网卡来避免回环。
+
+平台前置（**tun2socks 只负责收发包**；路由由上面的 `-tun-auto-route` 处理，或按下述手动配）：
+
+- **Windows**：把 `wintun.dll`（[wintun.net](https://www.wintun.net/)，与 CPU 架构匹配）放在二进制旁；以管理员运行。（手动：`netsh interface ip set address ...` + `route add`。）
+- **Linux**：以 root 运行。（手动：`ip addr add`/`ip route`/`ip rule`；出口/协调器地址走原网关。）
+- **macOS**：`utun` 设备 + `ifconfig`/`route`；以 root 运行。
+
+> 关键坑：**出口节点与协调器的连接必须绕开 TUN**，否则隧道流量被自己捕获会死循环。`-tun-auto-route` 已自动处理这些排除路由；不用它则须手动配。
 
 ### 待增强
-- 自动路由/排除路由下发（免手动 `route add`）。
+- 中继/自动发现出口的动态排除路由（当前仅协调器 + 手动 `-connect`）。
 - UDP/DNS 分流策略、IPv6。
 - 打包 `wintun.dll` 与安装器。
 
