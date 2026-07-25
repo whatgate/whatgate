@@ -16,7 +16,7 @@
 |---|---|---|---|---|
 | F1 | [#1](https://github.com/whatgate/whatgate/issues/1) | 🔴 HIGH | 出口 SSRF：可连内网/本机/云元数据 | ✅ fixed |
 | F2 | [#2](https://github.com/whatgate/whatgate/issues/2) | 🔴 HIGH | 声誉举报可被操纵，架空 `-min-reputation` | open |
-| F3 | [#3](https://github.com/whatgate/whatgate/issues/3) | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | open |
+| F3 | [#3](https://github.com/whatgate/whatgate/issues/3) | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | ✅ fixed |
 | F4 | [#4](https://github.com/whatgate/whatgate/issues/4) | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | open |
 | F5 | [#5](https://github.com/whatgate/whatgate/issues/5) | 🟠 MEDIUM | 协调面明文 HTTP，泄露邀请码/小网口令 | open |
 | F6 | [#6](https://github.com/whatgate/whatgate/issues/6) | 🟡 LOW-MED | 协调器 JSON 端点无请求体大小限制 | open |
@@ -77,6 +77,12 @@
 
 **修复**：匹配前 `ToLower` + 去尾点；按域名**后缀**匹配（含子域）；封锁集支持 IP/CIDR，
 并在 Dial 解析出 IP 后再查一次（与 F1 合并实现）。
+
+> ✅ **已修复**（`Fixes #3`）：`normalizeHost`（lower+去尾点）；`isHostBlocked` 逐级父域后缀匹配
+> （封 `evil.example` 覆盖 `sub.evil.example`，不误伤 `notevil.example`）；`parseBlockSet` 把封锁集
+> 分成域名 + IP/CIDR 两组，IP 字面量目标按 CIDR 命中。`SetBlockedDomains`（威胁情报刷新）同样重解析。
+> 测试覆盖大小写/尾点/子域/非子域、IP 与 CIDR 命中。（说明：域名→内网 IP 的 rebinding 已由 F1 的
+> `DialControl` 兜住；把 threat-feed 的 CIDR 也在 Dial 后套用属后续增强。）
 
 ---
 

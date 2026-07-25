@@ -52,6 +52,48 @@ func TestAuthorizeRejectsBlockedDomain(t *testing.T) {
 	}
 }
 
+func TestBlockedDomainMatchingIsRobust(t *testing.T) {
+	g := NewGuard(Policy{Scope: trust.ScopeOpen, BlockedDomains: map[string]bool{"evil.example": true}})
+
+	blocked := []string{
+		"evil.example",     // exact
+		"EVIL.example",     // case-insensitive
+		"evil.example.",    // trailing dot
+		"sub.evil.example", // subdomain
+		"a.b.evil.example", // deep subdomain
+	}
+	for _, h := range blocked {
+		if _, err := g.Authorize(Request{RequesterTier: trust.TierStranger, Host: h, Port: 443}); err != ErrBlockedDomain {
+			t.Errorf("host %q: err = %v, want ErrBlockedDomain", h, err)
+		}
+	}
+	// A domain that merely ends with the same text but isn't a subdomain must
+	// NOT be blocked.
+	if release, err := g.Authorize(Request{RequesterTier: trust.TierStranger, Host: "notevil.example", Port: 443}); err != nil {
+		t.Errorf("notevil.example should be allowed: %v", err)
+	} else {
+		release()
+	}
+}
+
+func TestBlockedDomainSetSupportsIPAndCIDR(t *testing.T) {
+	g := NewGuard(Policy{Scope: trust.ScopeOpen, AllowPrivateTargets: true, BlockedDomains: map[string]bool{
+		"198.51.100.7":   true, // single IP
+		"203.0.113.0/24": true, // CIDR
+	}})
+	for _, h := range []string{"198.51.100.7", "203.0.113.5", "203.0.113.200"} {
+		if _, err := g.Authorize(Request{RequesterTier: trust.TierStranger, Host: h, Port: 443}); err != ErrBlockedDomain {
+			t.Errorf("host %q: err = %v, want ErrBlockedDomain", h, err)
+		}
+	}
+	// An IP outside the blocked ranges is allowed.
+	if release, err := g.Authorize(Request{RequesterTier: trust.TierStranger, Host: "203.0.114.5", Port: 443}); err != nil {
+		t.Errorf("203.0.114.5 should be allowed: %v", err)
+	} else {
+		release()
+	}
+}
+
 func TestSetBlockedDomainsUpdatesDynamically(t *testing.T) {
 	g := NewGuard(Policy{Scope: trust.ScopeOpen})
 
