@@ -112,7 +112,7 @@ GFW 类敌手同时具备以下手段，且可**组合、可选择性、可按�
 #### B1 网络密钥准入（libp2p `pnet`）
 - 让全网成为一个 libp2p **private network**：未持网络密钥者握手第一步就失败（反主动探测 + 天然挡陌生人）。
 - **评审 P0 纠正——密钥派生方式**：**不得**用邀请码/小网口令直接派生全网 PSK（低熵秘密放在准入边界；泄露影响整网；轮换全员断连；无法撤销单成员）。改为：**高熵随机网络密钥**作短期保护层 + **成员级凭据**分发/封装/撤销；邀请码只用于**取得**成员凭据，不等价于网络密钥。与安全评审 F5（口令改 HMAC 挑战）统一设计。
-- **评审 P0 纠正——pnet/QUIC 兼容性别写死**：旧资料称"pnet 仅 TCP 不支持 QUIC"**可能已过时**——现行 go-libp2p QUIC transport 构造接口已接收 `pnet.PSK`。**落地前必须锁定 go-libp2p 版本**，对 TCP/WSS/QUIC/WebTransport 各写"无 PSK / 错 PSK / 正确 PSK"的**互操作 + 抓包测试矩阵**，据实测决定各传输取舍，**不得基于旧资料禁用或保留传输**。
+- **pnet/QUIC 兼容性调研（✅ 已完成，见 [docs/pnet-compat.md](pnet-compat.md)）**：锁定 v0.48.0 实测结论——**pnet 可用但仅覆盖 TCP + WebSocket**；QUIC/WebTransport 构造即报错（`"QUIC/WebTransport doesn't support private networks yet"`），libp2p 在设 PSK 时自动只保留 `DefaultPrivateTransports`(TCP+WS)。无 PSK 者被挡在握手外（反探测前提成立）。**与 A4 的 WS-on-:443 兼容**。代价：丢 QUIC/WebTransport、全网单 PSK、与"大网+小网联邦"模型冲突——**是否采用 pnet 是产品级岔路**（详见调研文档的后果与建议）。
 - **评审 P0——PSK ≠ 无指纹响应**：即使 pnet 覆盖某传输，连接超时/关闭时机/TLS·QUIC alert/包长/重传/端口行为仍可构成主动探测预言机。**B1 只是准入层，不是完成的探测抗性**；以黑盒主动探测 + 统计分类验证，而非只验"正常能连、错 PSK 不能连"。
 
 #### B2 可插拔混淆传输
