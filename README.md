@@ -72,16 +72,19 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 # 协调器（兼跑中继），播种邀请码；-state 让准入/小网/声誉跨重启留存
 # 声誉每小时向 0 衰减（-reputation-decay），被罚节点自动恢复
 # 生产务必启用 TLS（-tls-cert/-tls-key，或置于 TLS 反代后），否则邀请码/小网口令明文过网
-coordinator -addr :8080 -invite welcome -state ./coordinator-state.json
+# -signing-key 让协调器签名目录响应，启动会打印“协调器公钥”，把它作为节点的 -coordinator-key
+coordinator -addr :8080 -invite welcome -state ./coordinator-state.json -signing-key ./coordinator-signing.key
 
-# 出口节点：加入并注册为某地区(如 JP)出口
-node -coordinator http://<host>:8080 -invite welcome -exit -region JP
+# 出口节点：加入并注册为某地区(如 JP)出口（-coordinator-key 钉住协调器公钥）
+node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> -invite welcome -exit -region JP
 
 # 客户端：加入并按地区自动发现出口
-node -coordinator http://<host>:8080 -invite welcome -to JP -socks 127.0.0.1:1080
+node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> -invite welcome -to JP -socks 127.0.0.1:1080
 
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```
+
+> 🛡️ **抗封锁·响应认证（A0）**：协调器用 `-signing-key` 对**目录响应**签名；节点用 `-coordinator-key` 钉住其公钥后，会**校验目录签名并拒绝**未签名/被别的密钥签名/被回滚（旧序号）的目录——即便协调器被 MITM 或换成恶意镜像，也无法把你导向敌手出口。未钉公钥时节点会打印告警。TLS（`https://`）另外保护控制面**机密性**（问了哪些出口不外泄），二者互补。整体设计与路线图见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
 
 ### 本地状态面板
 
@@ -150,7 +153,7 @@ pkg/protocol      隧道 wire 协议（目标地址编解码）
 - **M5** 出口治理：ExitGuard（信任范围 + 端口/域名黑名单 + 并发限额） ✅（威胁情报接入与带宽熔断留待增强）
 - **M6** 扩展：桌面 TUN 全局模式（`-tags tun`，基于 tun2socks）可编译 + 移动端接入设计文档 ✅（TUN 需管理员/wintun.dll 在真机验证；移动端待平台 SDK 落地）。详见 [docs/tun-and-mobile.md](docs/tun-and-mobile.md)
 
-后续增强项（安全加固、UDP、持久化、UI、移动端落地等）见 **[docs/backlog.md](docs/backlog.md)**。
+后续增强项（安全加固、UDP、持久化、UI、移动端落地等）见 **[docs/backlog.md](docs/backlog.md)**。抗国家级防火墙封锁的设计与分阶段路线图见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
 
 > 注：真实跨 NAT 的打洞与 AutoRelay 自动预约需在两台异网机器上实测；本地回环已验证隧道与中继数据路径本身。
 

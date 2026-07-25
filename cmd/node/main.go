@@ -40,6 +40,7 @@ import (
 
 	"github.com/whatgate/whatgate/internal/audit"
 	"github.com/whatgate/whatgate/internal/coordinator"
+	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/exit"
 	"github.com/whatgate/whatgate/internal/node"
 	"github.com/whatgate/whatgate/internal/proxy"
@@ -60,7 +61,8 @@ func main() {
 	asExit := flag.Bool("exit", false, "act as an exit node for other peers (serves their traffic)")
 	connect := flag.String("connect", "", "exit peer multiaddr to tunnel through (manual client mode)")
 	socksAddr := flag.String("socks", "127.0.0.1:1080", "local SOCKS5 listen address (client mode)")
-	coordURL := flag.String("coordinator", "", "coordinator base URL, e.g. http://host:8080")
+	coordURL := flag.String("coordinator", "", "coordinator base URL, e.g. https://host:8080")
+	coordKey := flag.String("coordinator-key", "", "pinned coordinator public key (base64, printed by the coordinator): the directory must be signed by it, else it is rejected — defeats a rogue/MITM coordinator")
 	invite := flag.String("invite", "", "invite code to redeem when joining via coordinator")
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
 	toRegion := flag.String("to", "", "desired exit region to discover via coordinator (client mode)")
@@ -100,6 +102,24 @@ func main() {
 	var coord *coordinator.Client
 	if *coordURL != "" {
 		coord = coordinator.NewClient(*coordURL)
+		// Pin the coordinator's signing key so the directory it returns must be
+		// signed by that key — a reachable-but-rogue endpoint can't inject a
+		// poisoned directory. Distributed out of band (printed by the coordinator).
+		if *coordKey != "" {
+			pub, err := discovery.DecodePublicKey(*coordKey)
+			if err != nil {
+				log.Fatalf("bad -coordinator-key: %v", err)
+			}
+			coord.SetPinnedKey(pub)
+			fmt.Println("coordinator key: pinned (directory responses are verified)")
+		} else {
+			fmt.Println("WARNING: no -coordinator-key pinned; the directory is unauthenticated — a rogue/MITM coordinator can steer you onto a hostile exit")
+		}
+		// TLS carries the control plane's confidentiality; without it, which exits
+		// you ask about is observable and the endpoint is easy to SNI/DNS-block.
+		if strings.HasPrefix(*coordURL, "http://") {
+			fmt.Println("WARNING: coordinator URL is plaintext http://; use https:// (or a TLS-terminating proxy) so control-plane metadata isn't exposed")
+		}
 		// Configure the coordinator's relay as a fallback path, if it advertises
 		// one, so this node stays reachable when hole punching fails.
 		if info, err := coord.Relay(); err == nil {

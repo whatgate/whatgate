@@ -8,8 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
+	"time"
 
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/whatgate/whatgate/internal/authn"
+	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/trust"
 )
 
@@ -25,7 +29,20 @@ type Client struct {
 	// used in those requests. If nil, such requests go unsigned and the
 	// coordinator will reject them.
 	Signer func(action string) (authn.SignedAuth, error)
+
+	// pinnedKey, when set, is the control-plane public key that discovery
+	// responses must be signed by. A pinned client verifies every directory and
+	// refuses any that is unsigned or signed by a different key — so a
+	// reachable-but-rogue endpoint cannot inject a poisoned directory.
+	pinnedKey crypto.PubKey
+	dirMu     sync.Mutex
+	dirFloor  uint64 // highest directory serial accepted so far (anti-rollback)
 }
+
+// SetPinnedKey pins the control-plane key that signed discovery responses must
+// verify against. The key is distributed out of band (embedded seed / operator
+// config). With no pinned key the client accepts the legacy unsigned directory.
+func (c *Client) SetPinnedKey(pub crypto.PubKey) { c.pinnedKey = pub }
 
 // NewClient creates a coordinator client targeting baseURL (e.g.
 // "http://coordinator.example:8080").
@@ -92,9 +109,24 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, statusError("GET /directory", resp)
 	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// A pinned client requires a verified, non-rolled-back signed envelope and
+	// uses its payload as the entries; an unpinned client reads the bare array.
+	entriesJSON := body
+	if c.pinnedKey != nil {
+		payload, err := c.verifyDirectory(body)
+		if err != nil {
+			return nil, nil, err
+		}
+		entriesJSON = payload
+	}
 
 	var entries []directoryEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+	if err := json.Unmarshal(entriesJSON, &entries); err != nil {
 		return nil, nil, err
 	}
 	nodes := make([]NodeInfo, 0, len(entries))
@@ -110,6 +142,31 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 		tiers[e.PeerID] = e.Tier
 	}
 	return nodes, tiers, nil
+}
+
+// verifyDirectory checks a signed directory envelope against the pinned key and
+// the client's rollback floor, advancing the floor on success and returning the
+// verified entries payload.
+func (c *Client) verifyDirectory(body []byte) ([]byte, error) {
+	var signed discovery.Signed
+	if err := json.Unmarshal(body, &signed); err != nil {
+		return nil, fmt.Errorf("directory: not a signed envelope: %w", err)
+	}
+	c.dirMu.Lock()
+	floor := c.dirFloor
+	c.dirMu.Unlock()
+
+	payload, err := signed.Verify(c.pinnedKey, discovery.TypeDirectory, time.Now(), floor)
+	if err != nil {
+		return nil, fmt.Errorf("directory: %w", err)
+	}
+
+	c.dirMu.Lock()
+	if signed.Serial > c.dirFloor {
+		c.dirFloor = signed.Serial
+	}
+	c.dirMu.Unlock()
+	return payload, nil
 }
 
 // ReportOutcome reports (signed) an outcome about a requester's behavior, which

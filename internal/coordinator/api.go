@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/whatgate/whatgate/internal/authn"
+	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/persist"
 	"github.com/whatgate/whatgate/internal/trust"
 )
@@ -24,6 +26,11 @@ const maxBodyBytes = 64 << 10
 // maxRegisterAddrs bounds how many multiaddrs a node may advertise, so a
 // malicious registrant can't bloat the directory (which is broadcast to all).
 const maxRegisterAddrs = 32
+
+// directorySignatureTTL bounds how long a signed directory is accepted. The
+// live directory changes constantly (nodes refresh presence), so a short window
+// limits how long a captured signed response stays usable.
+const directorySignatureTTL = 90 * time.Second
 
 // decodeJSON reads a size-limited JSON body into v, returning false (and writing
 // a 400) on any error.
@@ -120,6 +127,46 @@ type Server struct {
 
 	sigMu    sync.Mutex
 	seenSigs map[string]time.Time // signature -> expiry, for replay rejection
+
+	signMu    sync.Mutex
+	signKey   crypto.PrivKey // if set, discovery responses are signed
+	dirSerial uint64         // monotonic serial for signed directories
+}
+
+// SetSigningKey configures the control-plane key used to sign discovery
+// responses (currently the directory). Clients that pin the matching public key
+// then reject any directory not signed by it — so a reachable-but-rogue endpoint
+// cannot inject a poisoned directory. If unset, responses keep their legacy
+// unsigned shape.
+func (s *Server) SetSigningKey(priv crypto.PrivKey) {
+	s.signMu.Lock()
+	defer s.signMu.Unlock()
+	s.signKey = priv
+}
+
+// signDirectory wraps payload in a signed envelope with the next monotonic
+// serial. Returns ok=false when no signing key is configured.
+func (s *Server) signDirectory(payload []byte) (discovery.Signed, bool) {
+	s.signMu.Lock()
+	defer s.signMu.Unlock()
+	if s.signKey == nil {
+		return discovery.Signed{}, false
+	}
+	s.dirSerial++
+	now := s.now()
+	obj, err := discovery.Sign(s.signKey, discovery.Meta{
+		Type:      discovery.TypeDirectory,
+		Serial:    s.dirSerial,
+		IssuedAt:  now,
+		ExpiresAt: now.Add(directorySignatureTTL),
+	}, payload)
+	if err != nil {
+		// A configured-but-failing signer is a server misconfiguration; log and
+		// fall back to unsigned rather than serving nothing.
+		log.Printf("[coordinator] sign directory: %v", err)
+		return discovery.Signed{}, false
+	}
+	return obj, true
 }
 
 // SetRelayInfo advertises a relay through the /relay endpoint.
@@ -506,7 +553,20 @@ func (s *Server) handleDirectory(w http.ResponseWriter, r *http.Request) {
 			Tier:     tier,
 		})
 	}
-	writeJSON(w, http.StatusOK, entries)
+
+	// When a signing key is configured, wrap the entries in a signed envelope so
+	// clients that pin the public key can reject a forged directory. Otherwise
+	// serve the legacy bare array.
+	payload, err := json.Marshal(entries)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if obj, ok := s.signDirectory(payload); ok {
+		writeJSON(w, http.StatusOK, obj)
+		return
+	}
+	writeJSON(w, http.StatusOK, json.RawMessage(payload))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

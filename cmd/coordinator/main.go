@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/whatgate/whatgate/internal/coordinator"
+	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/persist"
 	"github.com/whatgate/whatgate/internal/relay"
 )
@@ -36,6 +37,7 @@ func main() {
 	ttl := flag.Duration("ttl", 60*time.Second, "directory entry time-to-live")
 	tlsCert := flag.String("tls-cert", "", "path to a TLS certificate (with -tls-key, serve HTTPS so invite codes/group secrets aren't sent in cleartext)")
 	tlsKey := flag.String("tls-key", "", "path to the TLS private key (pairs with -tls-cert)")
+	signingKey := flag.String("signing-key", "", "path to the control-plane signing key (created if missing); signs the directory so nodes pinning the printed public key reject a forged/MITM directory")
 	relayListen := flag.String("relay-listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr for the co-located relay (empty to disable)")
 	statePath := flag.String("state", "", "path to a JSON state file for durable admissions/groups/reputation (empty = in-memory only)")
 	repDecay := flag.Int("reputation-decay", 1, "reputation points to decay toward zero each interval (0 = disabled)")
@@ -64,6 +66,21 @@ func main() {
 	}
 	if !invites.Exists(*invite) {
 		invites.Create(*invite, *issuer, *uses)
+	}
+
+	// Sign discovery responses so nodes can authenticate the directory (defeats a
+	// rogue/MITM coordinator). The public key is distributed out of band and
+	// pinned by nodes via -coordinator-key.
+	if *signingKey != "" {
+		priv, err := discovery.LoadOrCreateSigningKey(*signingKey)
+		if err != nil {
+			log.Fatalf("signing key: %v", err)
+		}
+		srv.SetSigningKey(priv)
+		fmt.Printf("directory signing: enabled\n")
+		fmt.Printf("coordinator public key (share as node -coordinator-key): %s\n", discovery.EncodePublicKey(priv.GetPublic()))
+	} else {
+		fmt.Println("directory signing: DISABLED — nodes cannot authenticate the directory; set -signing-key in production")
 	}
 
 	// Co-locate a Circuit Relay v2 so nodes that cannot hole-punch still connect.
