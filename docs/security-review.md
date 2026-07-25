@@ -19,8 +19,8 @@
 | F3 | [#3](https://github.com/whatgate/whatgate/issues/3) | 🟠 MEDIUM | 域名黑名单精确串匹配，易绕过；不挡 IP | ✅ fixed |
 | F4 | [#4](https://github.com/whatgate/whatgate/issues/4) | 🟠 MEDIUM | 出口侧无超时，slowloris/挂死可拖垮 | ✅ fixed |
 | F5 | [#5](https://github.com/whatgate/whatgate/issues/5) | 🟠 MEDIUM | 协调面明文 HTTP，泄露邀请码/小网口令 | open |
-| F6 | [#6](https://github.com/whatgate/whatgate/issues/6) | 🟡 LOW-MED | 协调器 JSON 端点无请求体大小限制 | open |
-| F7 | [#7](https://github.com/whatgate/whatgate/issues/7) | 🟡 LOW | 2 分钟重放窗口，无 nonce | open |
+| F6 | [#6](https://github.com/whatgate/whatgate/issues/6) | 🟡 LOW-MED | 协调器 JSON 端点无请求体大小限制 | ✅ fixed |
+| F7 | [#7](https://github.com/whatgate/whatgate/issues/7) | 🟡 LOW | 2 分钟重放窗口，无 nonce | ✅ fixed |
 | F8 | [#8](https://github.com/whatgate/whatgate/issues/8) | 🟡 LOW | 远程 URL 内嵌明文 PAT（凭据卫生） | open |
 
 ---
@@ -125,6 +125,10 @@
 **修复**：所有 handler 包 `http.MaxBytesReader(w, r.Body, 64<<10)`；限制 `Addrs` 条数/长度；
 给 HTTP server 设 `ReadHeaderTimeout`。
 
+> ✅ **已修复**（`Fixes #6`）：`decodeJSON` 统一 `MaxBytesReader(64KiB)`（5 个 POST 端点）；
+> `handleRegister` 限 `Addrs ≤ 32`；`ReadHeaderTimeout=10s` 已在 coordinator main 设置。
+> 测试：超大 body → 400。
+
 ---
 
 ## 🟡 F7 — 2 分钟重放窗口、无 nonce（LOW）
@@ -132,6 +136,10 @@
 签名请求在 `authMaxSkew=2min` 内可原样重放；`/report` 的 delta 会被重复计入（见 F2）。
 
 **修复**：协调器记最近用过的签名（`sig` 去重）或引入一次性 nonce。
+
+> ✅ **已修复**（`Fixes #7`）：`checkAuth` 验签后查 `seenSigs`（签名→过期时间）——Ed25519 签名确定性，
+> 重放请求携带相同签名即被拒；条目保留到窗口远端后惰性清理。测试：同一签名 join 两次 → 第二次 401。
+> 这也堵住了 F2 的重放刷分子路径。
 
 ---
 

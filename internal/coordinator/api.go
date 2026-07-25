@@ -17,6 +17,25 @@ import (
 // coordinator's clock (anti-replay window).
 const authMaxSkew = 2 * time.Minute
 
+// maxBodyBytes caps a request body — the JSON messages here are tiny, so this
+// just stops a client from streaming an unbounded body at the coordinator.
+const maxBodyBytes = 64 << 10
+
+// maxRegisterAddrs bounds how many multiaddrs a node may advertise, so a
+// malicious registrant can't bloat the directory (which is broadcast to all).
+const maxRegisterAddrs = 32
+
+// decodeJSON reads a size-limited JSON body into v, returning false (and writing
+// a 400) on any error.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
 // Wire types for the coordinator HTTP/JSON API.
 type joinRequest struct {
 	Code   string           `json:"code"`
@@ -98,6 +117,9 @@ type Server struct {
 	mu           sync.Mutex
 	groupSecrets map[string]string // groupID -> join secret
 	statePath    string            // if set, durable state is snapshotted here
+
+	sigMu    sync.Mutex
+	seenSigs map[string]time.Time // signature -> expiry, for replay rejection
 }
 
 // SetRelayInfo advertises a relay through the /relay endpoint.
@@ -115,6 +137,7 @@ func NewServer(dir *Directory, invites *InviteStore) *Server {
 		rep:          trust.NewReputation(),
 		now:          time.Now,
 		groupSecrets: make(map[string]string),
+		seenSigs:     make(map[string]time.Time),
 	}
 }
 
@@ -176,12 +199,42 @@ func (s *Server) save() {
 	}
 }
 
-// checkAuth verifies that a proves ownership of claimedPeerID for action.
+// checkAuth verifies that a proves ownership of claimedPeerID for action, and
+// rejects a signature already seen within the replay window.
 func (s *Server) checkAuth(a authn.SignedAuth, action, claimedPeerID string) error {
 	if a.PeerID != claimedPeerID {
 		return errors.New("auth: peer ID does not match request")
 	}
-	return authn.Verify(a, action, s.now(), authMaxSkew)
+	if err := authn.Verify(a, action, s.now(), authMaxSkew); err != nil {
+		return err
+	}
+	if s.seenSignature(a.Signature) {
+		return errors.New("auth: replayed signature")
+	}
+	return nil
+}
+
+// seenSignature records sig and reports whether it was already seen (and still
+// within its replay window). Ed25519 signatures are deterministic, so a replayed
+// request carries an identical signature. Expired entries are pruned lazily.
+func (s *Server) seenSignature(sig string) bool {
+	now := s.now()
+	s.sigMu.Lock()
+	defer s.sigMu.Unlock()
+	if exp, ok := s.seenSigs[sig]; ok && now.Before(exp) {
+		return true
+	}
+	// Keep an entry until the far edge of the acceptance window so a captured
+	// request can't be replayed after its own timestamp check would still pass.
+	s.seenSigs[sig] = now.Add(authMaxSkew)
+	if len(s.seenSigs) > 1 {
+		for k, exp := range s.seenSigs {
+			if !now.Before(exp) {
+				delete(s.seenSigs, k)
+			}
+		}
+	}
+	return false
 }
 
 // Graph exposes the coordinator's trust graph (authoritative store).
@@ -225,8 +278,7 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req reportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	action := "report:" + req.Subject + ":" + req.Outcome
@@ -285,8 +337,7 @@ func (s *Server) handleGroupJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req joinGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	// The signer may only add itself (signer == peerID).
@@ -324,8 +375,7 @@ func (s *Server) handleGroupEndorse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req endorseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	action := "group/endorse:" + req.FromGroup + ":" + req.ToGroup
@@ -362,8 +412,7 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req joinRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if err := s.checkAuth(req.Auth, "join", req.PeerID); err != nil {
@@ -394,8 +443,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req registerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if err := s.checkAuth(req.Auth, "register", req.PeerID); err != nil {
@@ -405,6 +453,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	if _, admitted := s.invites.AdmissionOf(req.PeerID); !admitted {
 		http.Error(w, "not admitted; redeem an invite first", http.StatusForbidden)
+		return
+	}
+
+	if len(req.Addrs) > maxRegisterAddrs {
+		http.Error(w, "too many addresses", http.StatusBadRequest)
 		return
 	}
 
