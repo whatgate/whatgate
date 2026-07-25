@@ -90,7 +90,9 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 > - **本地目录缓存（A3）**：`-coordinator-cache`（需 `-coordinator-key`）把**已验签**的目录落盘（仅本人可读）；协调器全被封时用缓存续命，避免"一封就断"。缓存仍受签名/过期/回滚校验，过期即拒；用缓存时会打印告警。
 > - **TLS（`https://`）** 另外保护控制面**机密性**（问了哪些出口不外泄），与签名互补。
 >
-> 整体设计与分阶段路线图（含 A4/Tier B 探测抗性、Tier C 去中心化发现）见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
+> - **端口伪装（A4）**：`-listen` 支持逗号分隔多地址；加 `/ip4/0.0.0.0/tcp/443/ws` 让数据面骑 **:443** 像 web 流量。这只是**粗筛级伪装**（非探测抗性）；要真像 HTTPS 需 `/tls/ws`+证书或 TLS 反代，多数住宅节点无公网入站则保持拨号-only 经中继。
+>
+> 整体设计与分阶段路线图（含 Tier B 探测抗性、Tier C 去中心化发现）见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
 
 ### 本地状态面板
 

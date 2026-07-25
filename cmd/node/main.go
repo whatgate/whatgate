@@ -57,7 +57,7 @@ var version = "dev"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
-	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr")
+	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr(s), comma-separated; add e.g. /ip4/0.0.0.0/tcp/443/ws to also ride :443 like web traffic (A4)")
 	asExit := flag.Bool("exit", false, "act as an exit node for other peers (serves their traffic)")
 	connect := flag.String("connect", "", "exit peer multiaddr to tunnel through (manual client mode)")
 	socksAddr := flag.String("socks", "127.0.0.1:1080", "local SOCKS5 listen address (client mode)")
@@ -98,7 +98,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	nodeOpts := []node.Option{node.WithListenAddrs(*listen)}
+	listenAddrs, err := node.ParseListenAddrs(*listen)
+	if err != nil {
+		log.Fatalf("bad -listen: %v", err)
+	}
+	nodeOpts := []node.Option{node.WithListenAddrs(listenAddrs...)}
 
 	var coord *coordinator.Client
 	if *coordURL != "" {
