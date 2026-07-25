@@ -19,13 +19,25 @@
 
 ## 快速开始
 
-### 构建
+### 下载预编译二进制（推荐）
+
+到 [**Releases**](https://github.com/whatgate/whatgate/releases) 下载对应平台的压缩包（Windows/macOS/Linux，amd64 与 arm64），解压即用——**无需安装 Go 或任何运行时**。每个包内含：
+
+- `coordinator` — 协调服务器
+- `node` — 参与节点（精简版：SOCKS5 代理）
+- `node-tun` — 参与节点（全局 TUN/VPN 模式；运行需管理员/root，Windows 另需 `wintun.dll`）
+
+用 `SHA256SUMS` 可校验完整性；`node -version` / `coordinator -version` 打印版本。
+
+> 维护者发布新版本：`git tag v0.1.0 && git push origin v0.1.0`，GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）会自动交叉编译六平台并创建 Release。
+
+### 从源码构建
 
 ```bash
 go build -o bin/ ./...
 ```
 
-产出 `bin/coordinator` 与 `bin/node`（Windows 为 `.exe`）。终端用户无需装 Go，直接用预编译二进制。
+产出 `bin/coordinator` 与 `bin/node`（Windows 为 `.exe`）。
 
 全局 TUN 模式（可选，体积更大、需管理员权限运行）：
 
@@ -34,6 +46,12 @@ go build -tags tun -o bin/node-tun ./cmd/node
 ```
 
 （运行方式与平台前置见 [docs/tun-and-mobile.md](docs/tun-and-mobile.md)。）
+
+一键交叉编译全平台发布包（产出到 `dist/`）：
+
+```bash
+scripts/build-release.sh v0.1.0
+```
 
 ### 方式 A：手动直连（无需协调器）
 

@@ -23,7 +23,12 @@ import (
 	"github.com/whatgate/whatgate/internal/relay"
 )
 
+// version is the build version, injected via -ldflags "-X main.version=..." at
+// release time; "dev" for local builds.
+var version = "dev"
+
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	invite := flag.String("invite", "welcome", "invite code to seed for admission")
 	issuer := flag.String("issuer", "founder", "issuer attributed to the seeded invite")
@@ -34,6 +39,11 @@ func main() {
 	repDecay := flag.Int("reputation-decay", 1, "reputation points to decay toward zero each interval (0 = disabled)")
 	repDecayInterval := flag.Duration("reputation-decay-interval", time.Hour, "how often to apply reputation decay")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("whatgate coordinator %s\n", version)
+		return
+	}
 
 	dir := coordinator.NewDirectory(*ttl, nil)
 	invites := coordinator.NewInviteStore(nil)

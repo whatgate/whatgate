@@ -50,7 +50,12 @@ import (
 	"github.com/whatgate/whatgate/internal/webui"
 )
 
+// version is the build version, injected via -ldflags "-X main.version=..." at
+// release time; "dev" for local builds.
+var version = "dev"
+
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr")
 	asExit := flag.Bool("exit", false, "act as an exit node for other peers (serves their traffic)")
 	connect := flag.String("connect", "", "exit peer multiaddr to tunnel through (manual client mode)")
@@ -79,6 +84,11 @@ func main() {
 	tunAddr := flag.String("tun-addr", "10.6.7.1", "TUN mode: IP to assign the TUN interface when -tun-auto-route is set")
 	tunGateway := flag.String("tun-gateway", "", "TUN mode: physical default gateway for -tun-auto-route exclusions (auto-detected if empty)")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("whatgate node %s\n", version)
+		return
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

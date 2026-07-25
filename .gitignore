@@ -1,3 +1,6 @@
+# Release artifacts (produced by scripts/build-release.sh)
+/dist/
+
 # Compiled binaries
 /bin/
 *.exe
