@@ -42,6 +42,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/whatgate/whatgate/internal/audit"
+	"github.com/whatgate/whatgate/internal/config"
 	"github.com/whatgate/whatgate/internal/coordinator"
 	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/exit"
@@ -61,6 +62,7 @@ var version = "dev"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
+	configPath := flag.String("config", "", "JSON config file whose keys are flag names; command-line flags override it")
 	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr(s), comma-separated; add e.g. /ip4/0.0.0.0/tcp/443/ws to also ride :443 like web traffic (A4)")
 	asExit := flag.Bool("exit", false, "act as an exit node for other peers (serves their traffic)")
 	connect := flag.String("connect", "", "exit peer multiaddr to tunnel through (manual client mode)")
@@ -108,6 +110,13 @@ func main() {
 	if *showVersion {
 		fmt.Printf("whatgate node %s\n", version)
 		return
+	}
+
+	// A config file fills in any flag not set on the command line.
+	if *configPath != "" {
+		if err := config.ApplyFile(flag.CommandLine, *configPath); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

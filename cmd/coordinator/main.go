@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/whatgate/whatgate/internal/config"
 	"github.com/whatgate/whatgate/internal/coordinator"
 	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/membership"
@@ -33,6 +34,7 @@ var version = "dev"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
+	configPath := flag.String("config", "", "JSON config file whose keys are flag names; command-line flags override it")
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	invite := flag.String("invite", "welcome", "invite code to seed for admission")
 	issuer := flag.String("issuer", "founder", "issuer attributed to the seeded invite")
@@ -76,6 +78,13 @@ func main() {
 	if *showVersion {
 		fmt.Printf("whatgate coordinator %s\n", version)
 		return
+	}
+
+	// A config file fills in any flag not set on the command line.
+	if *configPath != "" {
+		if err := config.ApplyFile(flag.CommandLine, *configPath); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// Producer mode: sign a bootstrap list and exit. This is an offline operator
