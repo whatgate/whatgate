@@ -138,7 +138,8 @@ func main() {
 				fmt.Printf("directory cache: %s\n", *coordCache)
 			}
 			if *bootstrapURL != "" {
-				fmt.Printf("bootstrap URL: %s (used if coordinators are unreachable at cold start)\n", *bootstrapURL)
+				coord.SetBootstrapURL(*bootstrapURL)
+				fmt.Printf("bootstrap URL: %s (self-heals endpoints when coordinators are unreachable)\n", *bootstrapURL)
 			}
 		} else {
 			if *coordCache != "" {

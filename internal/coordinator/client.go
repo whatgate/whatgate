@@ -45,7 +45,14 @@ type Client struct {
 	bootstrapFloor uint64 // highest bootstrap-list serial accepted so far (anti-rollback)
 	cachePath      string // if set (and pinned), the last verified directory is cached here
 	stale          bool   // whether the last DirectoryFor result came from the cache
+	bootstrapURL   string // if set (and pinned), the out-of-band list used to self-heal endpoints
 }
+
+// SetBootstrapURL configures the out-of-band bootstrap list (C2) the client uses
+// to self-heal its coordinator endpoints when every configured endpoint is
+// unreachable and no cache is available — on the directory path, not only at
+// cold-start join. Requires a pinned key (RefreshFromBootstrap is fail-closed).
+func (c *Client) SetBootstrapURL(url string) { c.bootstrapURL = url }
 
 // SetDirectoryCache enables persisting the last verified directory to path
 // (owner-only) and serving it when every coordinator endpoint is unreachable.
@@ -200,7 +207,15 @@ func (c *Client) DirectoryFor(from string) ([]NodeInfo, map[string]trust.Tier, e
 		if nodes, tiers, ok := c.directoryFromCache(); ok {
 			return nodes, tiers, nil
 		}
-		return nil, nil, err
+		// C2 self-heal: refresh endpoints from the out-of-band bootstrap list and
+		// retry once, so a returning node whose coordinators are all blocked can
+		// recover here (not only at cold-start join).
+		if c.bootstrapURL != "" && c.RefreshFromBootstrap(c.bootstrapURL) == nil {
+			resp, err = c.get("GET /directory", path)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
