@@ -40,7 +40,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 | 优先级 | 项 | 说明 |
 |---|---|---|
 | P1 | ~~**UDP 支持**~~ ✅ **已完成** | SOCKS5 UDP ASSOCIATE + libp2p UDP 数据报隧道（`pkg/protocol` 帧、`node` UDPSession/出口转发、`proxy` UDP 中继），DNS-over-UDP 真实出网验证。UDP 出口已接 ExitGuard（与 TCP 共用授权：信任范围/声誉/端口/域名/并发）。 |
-| P2 | **选路精细化** | 延迟周期性重探 + 移动平均；可配的加权综合评分（信任/延迟/负载权重）。 |
+| P2 | **选路精细化** `partial` | **可配加权综合评分 ✅**：`routing.RankExitsWeighted`（`Weights{Trust,Latency,Load}`，综合分排序 + 字典序 tie-break，仍按 scope 过滤）；node `-rank-{trust,latency,load}-weight`（任一非零启用，默认字典序不变）。**剩：延迟周期性重探 + 移动平均（EWMA，需后台探针）**。 |
 | P2 | **DNS 策略** | 明确并可配 DNS 解析位置（出口侧解析利于解锁）；文档化防 DNS 泄漏。 |
 
 ## E. TUN 全局模式（桌面）
