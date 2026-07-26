@@ -9,10 +9,13 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"net"
+
 	"github.com/whatgate/whatgate/internal/authn"
 	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/membership"
 	"github.com/whatgate/whatgate/internal/persist"
+	"github.com/whatgate/whatgate/internal/ratelimit"
 	"github.com/whatgate/whatgate/internal/trust"
 )
 
@@ -130,6 +133,8 @@ type Server struct {
 	mu           sync.Mutex
 	groupSecrets map[string]string // groupID -> join secret
 	statePath    string            // if set, durable state is snapshotted here
+
+	limiter *ratelimit.Limiter // if set, per-client-IP rate limit on mutating endpoints
 
 	sigMu    sync.Mutex
 	seenSigs map[string]time.Time // signature -> expiry, for replay rejection
@@ -363,17 +368,53 @@ func (s *Server) seenSignature(sig string) bool {
 // Graph exposes the coordinator's trust graph (authoritative store).
 func (s *Server) Graph() *trust.Graph { return s.graph }
 
-// Handler returns the HTTP handler exposing the coordinator API.
+// SetRateLimit enables per-client-IP rate limiting on the mutating endpoints
+// (join/register/group/report): each client IP may burst up to burst requests
+// and sustain ratePerSec. This slows mass join/register from a leaked invite
+// (Sybil abuse) on top of the invite's total-uses cap. NOTE: keyed by the
+// connection's remote IP — behind a shared proxy/CDN the operator must ensure the
+// real client IP reaches the coordinator, or all clients share one bucket.
+func (s *Server) SetRateLimit(ratePerSec, burst float64) {
+	s.limiter = ratelimit.New(ratePerSec, burst)
+}
+
+// rateLimited wraps a handler with the per-IP limiter (no-op if unset), rejecting
+// over-limit requests with 429 before any decoding or auth.
+func (s *Server) rateLimited(next http.HandlerFunc) http.HandlerFunc {
+	if s.limiter == nil {
+		return next
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.limiter.Allow(clientIP(r)) {
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// clientIP returns the host portion of the request's remote address (the limiter
+// key). Falls back to the raw RemoteAddr if it has no port.
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// Handler returns the HTTP handler exposing the coordinator API. The mutating
+// endpoints are rate-limited per client IP (when enabled); the cheap read
+// endpoints are not.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/join", s.handleJoin)
-	mux.HandleFunc("/register", s.handleRegister)
+	mux.HandleFunc("/join", s.rateLimited(s.handleJoin))
+	mux.HandleFunc("/register", s.rateLimited(s.handleRegister))
 	mux.HandleFunc("/directory", s.handleDirectory)
 	mux.HandleFunc("/relay", s.handleRelay)
-	mux.HandleFunc("/group/join", s.handleGroupJoin)
-	mux.HandleFunc("/group/endorse", s.handleGroupEndorse)
+	mux.HandleFunc("/group/join", s.rateLimited(s.handleGroupJoin))
+	mux.HandleFunc("/group/endorse", s.rateLimited(s.handleGroupEndorse))
 	mux.HandleFunc("/trust", s.handleTrust)
-	mux.HandleFunc("/report", s.handleReport)
+	mux.HandleFunc("/report", s.rateLimited(s.handleReport))
 	mux.HandleFunc("/reputation", s.handleReputation)
 	mux.HandleFunc("/groups", s.handleGroups)
 	return mux

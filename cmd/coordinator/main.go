@@ -45,6 +45,8 @@ func main() {
 	statePath := flag.String("state", "", "path to a JSON state file for durable admissions/groups/reputation (empty = in-memory only)")
 	repDecay := flag.Int("reputation-decay", 1, "reputation points to decay toward zero each interval (0 = disabled)")
 	repDecayInterval := flag.Duration("reputation-decay-interval", time.Hour, "how often to apply reputation decay")
+	rateLimit := flag.Float64("rate-limit", 0, "per-client-IP requests/sec on mutating endpoints (join/register/group/report); 0 = disabled. Slows mass join/register from a leaked invite")
+	rateBurst := flag.Float64("rate-burst", 20, "per-client-IP burst allowance for -rate-limit")
 	emitBootstrap := flag.String("emit-bootstrap", "", "sign a bootstrap list of the given comma-separated coordinator URLs (needs -signing-key), print it to stdout, and exit; host the output on an out-of-band channel (CDN/GitHub raw) as a node -bootstrap-url")
 	bootstrapSerial := flag.Uint64("bootstrap-serial", 0, "monotonic serial for -emit-bootstrap; must strictly increase across publications (older ones are rejected as rollbacks)")
 	bootstrapTTL := flag.Duration("bootstrap-ttl", 30*24*time.Hour, "how long a -emit-bootstrap list stays acceptable to nodes")
@@ -230,6 +232,12 @@ func main() {
 		for _, a := range addrs {
 			fmt.Printf("  relay addr: %s/p2p/%s\n", a, rl.ID())
 		}
+	}
+
+	// Per-client-IP rate limiting on mutating endpoints (anti-Sybil / anti-abuse).
+	if *rateLimit > 0 {
+		srv.SetRateLimit(*rateLimit, *rateBurst)
+		fmt.Printf("rate limit: %.3g req/s per IP (burst %.3g) on join/register/group/report\n", *rateLimit, *rateBurst)
 	}
 
 	// Periodically decay reputation so punishments fade and scores don't linger.
