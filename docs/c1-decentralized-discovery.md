@@ -123,7 +123,7 @@ A0 目录/relay(权威, 带信任层级)       │ 出口: Provide 到"每epoch�
 | 子切片 | 内容 | 关键测试 / 红队 |
 |---|---|---|
 | **C1.0 契约冻结 + blocker 矩阵 spike** ✅**已完成** | ①**blocker 矩阵已实测 GO**（[c1-dht-compat.md](c1-dht-compat.md)：前缀隔离/RT-filter/gater 服务端强制/provider 单指针/PutValue 单值/pnet 兼容 六项成立；kad-dht v0.42.1 恰配 libp2p v0.48.0）②**契约已冻结**（§15：对象 schema+版本、protocol ID、两段入站认证、挑战绑主体、pnet 默认关、版本协商+降级拒绝） | 无 blocker 命中"停止假设" → **私有认证成员 DHT 可行**，进入 C1.1。探针跑完已移除、go.mod 复原（kad-dht 至 C1.1 再入） |
-| **C1.1 离线根 + 在线受限 issuer + 成员证书** | 离线根签 issuer 子证书；协调器准入后用 issuer 签普通成员证书；出口/relay 证书须根/双签；客户端 issuer allowlist | 无效/过期/被撤销/越权(在线 issuer 签出口)证书 → 拒 |
+| **C1.1 离线根 + 在线受限 issuer + 成员证书** ✅**已完成** | `internal/membership`(Sign/Verify 证书链 + 角色子集强制)；协调器 `SetIssuer` 在 join 铸 {member} 证书 + 离线根 `-emit-issuer-cert` CLI；节点 `-member-cert` 落盘凭据链。commit 1bfcb6b(库)+d39a85b(接线)，10+3+1 测试全绿，真机 e2e 通 | 无效/过期/被撤销/越权(在线 issuer 签出口)证书 → 拒 ✅ |
 | **C1.2 撤销 checkpoint + 陈旧兜底** | 根签 checkpoint（thisUpdate/nextUpdate/版本/陈旧上限）；带外+DHT 分发；离线超期 → 应急受限 scope | 撤销成员记录被拒；超陈旧上限 → 拒建普通隧道、仅应急；防 fail-open |
 | **C1.3 私有认证 DHT 引导 + 入站门控** | node 挂 DHT + `/whatgate/kad` 前缀 + **ConnectionGater 成员握手**；server/client 模式；bootstrap bundle 供给；双轨接线 | 未认证连接不进路由表/无 RPC；无协调器时经认证 DHT 发现 |
 | **C1.4 节点记录两层发现 + 四状态合并 + 拨号策略** | epoch capability CID → FindProviders → 认证 NodeRecord 拉取；四状态状态机 + equivocation 隔离 + 连通性挑战 + 地址 gater/拨号预算 | 伪出口/替换址/重放旧 generation/equivocation/SSRF 地址/无 recommended 补齐 → 拒或受限；合法短期记录 → 采信 |
