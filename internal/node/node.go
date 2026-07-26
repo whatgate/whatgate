@@ -12,6 +12,7 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,10 @@ const TunnelProtocol = protocol.ID("/whatgate/tunnel/0.1.0")
 type Node struct {
 	h        host.Host
 	exitLoad atomic.Int64 // active inbound tunnel streams being served as exit
+
+	credMu     sync.Mutex // guards the member credential chain served over member-auth
+	memberCert []byte
+	issuerCert []byte
 }
 
 // ExitLoad reports how many tunnel streams this node is currently serving as an
