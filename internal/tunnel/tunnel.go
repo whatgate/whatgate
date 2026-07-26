@@ -35,6 +35,10 @@ type Options struct {
 	// IdleTimeout closes the relay if no bytes flow in either direction for this
 	// long (0 = never; long active transfers keep resetting it).
 	IdleTimeout time.Duration
+	// Meter, if non-nil, is called with the byte count of each relayed chunk (in
+	// either direction). Returning true tears the relay down — used to enforce a
+	// per-requester bandwidth budget (circuit breaker). Must not block.
+	Meter func(n int) bool
 }
 
 // ServeExit handles one inbound tunnel stream on the exit node: it reads the
@@ -77,33 +81,46 @@ func ServeExit(stream net.Conn, authorize Authorizer, dial DialFunc, opts Option
 	}
 	defer remote.Close()
 
-	pipe(stream, remote, opts.IdleTimeout)
+	pipe(stream, remote, opts.IdleTimeout, opts.Meter)
 	return nil
 }
 
 // pipe copies bytes in both directions until either side closes. With idle > 0,
-// a direction that sees no bytes for idle is torn down.
-func pipe(a, b net.Conn, idle time.Duration) {
+// a direction that sees no bytes for idle is torn down. When either direction's
+// meter trips, both are closed so the relay stops promptly.
+func pipe(a, b net.Conn, idle time.Duration, meter func(n int) bool) {
 	done := make(chan struct{}, 2)
-	go func() { copyIdle(a, b, idle); done <- struct{}{} }()
-	go func() { copyIdle(b, a, idle); done <- struct{}{} }()
+	go func() { copyIdle(a, b, idle, meter); done <- struct{}{} }()
+	go func() { copyIdle(b, a, idle, meter); done <- struct{}{} }()
+	<-done
+	// One direction ended (close, idle, or meter trip); closing both unblocks the
+	// other copy so this relay tears down fully.
+	_ = a.Close()
+	_ = b.Close()
 	<-done
 }
 
 // copyIdle copies src→dst, resetting src's read deadline on each read so an idle
-// connection is closed after idle. idle <= 0 falls back to a plain copy.
-func copyIdle(dst, src net.Conn, idle time.Duration) {
-	if idle <= 0 {
+// connection is closed after idle. With no idle limit and no meter, it uses a
+// plain copy; otherwise it loops per-chunk so the meter can count bytes and, on a
+// tripped budget, tear the relay down.
+func copyIdle(dst, src net.Conn, idle time.Duration, meter func(n int) bool) {
+	if idle <= 0 && meter == nil {
 		_, _ = io.Copy(dst, src)
 		return
 	}
 	buf := make([]byte, 32*1024)
 	for {
-		_ = src.SetReadDeadline(time.Now().Add(idle))
+		if idle > 0 {
+			_ = src.SetReadDeadline(time.Now().Add(idle))
+		}
 		n, err := src.Read(buf)
 		if n > 0 {
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return
+			}
+			if meter != nil && meter(n) {
+				return // bandwidth budget exceeded: cut the relay
 			}
 		}
 		if err != nil {

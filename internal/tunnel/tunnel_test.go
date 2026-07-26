@@ -129,6 +129,34 @@ func TestServeExitDialTimeout(t *testing.T) {
 	}
 }
 
+// TestServeExitMeterCutsOverBudget: when the Meter reports the byte budget is
+// exceeded, the relay is torn down (the breaker cuts an in-flight transfer).
+func TestServeExitMeterCutsOverBudget(t *testing.T) {
+	echo := startEchoServer(t)
+	dial := func(ctx context.Context, addr string) (net.Conn, error) {
+		return net.Dial("tcp", echo.Addr().String())
+	}
+	clientEnd, exitEnd := net.Pipe()
+	t.Cleanup(func() { _ = clientEnd.Close() })
+
+	// Meter trips on the very first charged bytes.
+	opts := Options{Meter: func(n int) bool { return n > 0 }}
+	done := make(chan error, 1)
+	go func() { done <- ServeExit(exitEnd, nil, dial, opts) }()
+
+	go func() {
+		_ = protocol.WriteTarget(clientEnd, "example.com:80")
+		_, _ = clientEnd.Write([]byte("flood"))
+	}()
+
+	select {
+	case <-done:
+		// ServeExit returned → the relay was cut, as intended.
+	case <-time.After(3 * time.Second):
+		t.Fatal("ServeExit did not return after the meter tripped")
+	}
+}
+
 type errString string
 
 func (e errString) Error() string { return string(e) }

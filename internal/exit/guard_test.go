@@ -204,6 +204,37 @@ func TestAuthorizeRateLimitDisabledByDefault(t *testing.T) {
 	}
 }
 
+func TestAuthorizeRejectsOverBandwidthBudget(t *testing.T) {
+	// A requester that has blown its byte budget is refused new connections
+	// (the breaker), until the budget refills.
+	g := NewGuard(Policy{Scope: trust.ScopeOpen, RequesterBytesPerSec: 1000, RequesterByteBurst: 1000})
+	req := Request{RequesterID: "hog", RequesterTier: trust.TierStranger, Host: "example.com", Port: 443}
+
+	// First connection is allowed and its transfer blows the budget.
+	rel, err := g.Authorize(req)
+	if err != nil {
+		t.Fatalf("first authorize: %v", err)
+	}
+	rel()
+	if tripped := g.Charge("hog", 5000); !tripped {
+		t.Fatal("5000 bytes over 1000 budget should trip")
+	}
+	// The next connection attempt is refused by the breaker.
+	if _, err := g.Authorize(req); err != ErrBandwidthExceeded {
+		t.Fatalf("over-budget authorize err = %v, want ErrBandwidthExceeded", err)
+	}
+}
+
+func TestChargeNoopWhenBandwidthDisabled(t *testing.T) {
+	g := NewGuard(Policy{Scope: trust.ScopeOpen})
+	if g.BandwidthLimited() {
+		t.Fatal("bandwidth limiting should be disabled by default")
+	}
+	if g.Charge("x", 1<<30) {
+		t.Fatal("Charge must be a no-op (never trip) when bandwidth limiting is off")
+	}
+}
+
 func TestAuthorizeAllowsAndReleases(t *testing.T) {
 	g := NewGuard(Policy{Scope: trust.ScopeOpen})
 

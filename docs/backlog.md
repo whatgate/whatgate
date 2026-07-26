@@ -23,7 +23,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 |---|---|---|
 | P1 | ~~**连接留痕持久化（可追溯审计）**~~ ✅ **已完成** | 出口 `-audit-log` 把"时间/谁/连了什么/结果(served/denied+原因)"以 JSON Lines 追加落盘（`internal/audit`），配合邀请链做事后追责。 |
 | P1 | ~~**威胁情报域名源**~~ ✅ **已完成** | 出口 `-threat-feed`(url/文件, hosts 或纯域名格式)启动拉取并入黑名单、定期刷新(`internal/threatfeed`)。 |
-| P2 | **带宽级限额与熔断** | 当前限并发连接数；补带宽配额 + 异常流量模式自动熔断并降请求方声誉。 |
+| P2 | ~~**带宽级限额与熔断**~~ ✅ **已完成** | 出口按请求方**字节速率令牌桶**（`internal/bandwidth`）限吞吐：超预算即**熔断**——`tunnel` 计量钩子切断当前传输、`ErrBandwidthExceeded` 拒绝其新连接、并经 `Report(OutcomeBlocked)` 下调其声誉；字节预算随时间自动回补恢复（切断时长与超量成正比）。node `-requester-bandwidth`/`-requester-bandwidth-burst`（默认禁用）；埋点 `exit_bandwidth-tripped` + `exit_denied:bandwidth`。诚实边界：目前覆盖 TCP 隧道，UDP 计量待补。 |
 | P2 | ~~**按请求方限速**~~ ✅ **已完成** | 出口 ExitGuard 双重限单请求方：并发上限（`MaxConnsPerRequester`，`-max-conns-per-requester`）+ 建连速率令牌桶（`RequesterRatePerSec`/`RequesterBurst`，`-requester-rate`/`-requester-burst`，复用 `internal/ratelimit`），后者挡住快开快关、绕过并发上限的 churn 型滥用（超限 `ErrRequesterRateLimited`）。默认全禁用。 |
 
 ## C. 组网 / 协调 / 中继

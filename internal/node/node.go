@@ -206,7 +206,7 @@ func CircuitAddrsVia(relay peer.AddrInfo) ([]multiaddr.Multiaddr, error) {
 // requested target via dial. This is the opt-in that turns a node into an exit
 // for others; callers must only invoke it with the user's explicit consent.
 func (n *Node) EnableExit(dial tunnel.DialFunc) {
-	n.setExitHandler(dial, nil)
+	n.setExitHandler(dial, nil, nil)
 }
 
 // GuardedExit configures an exit that authorizes each request through an
@@ -248,6 +248,8 @@ func denyReason(err error) string {
 		return "denied:too-many-requester-conns"
 	case errors.Is(err, exit.ErrRequesterRateLimited):
 		return "denied:requester-rate"
+	case errors.Is(err, exit.ErrBandwidthExceeded):
+		return "denied:bandwidth"
 	default:
 		return "denied:other"
 	}
@@ -257,7 +259,7 @@ func denyReason(err error) string {
 // cfg.Guard before dialing — refusing untrusted, low-reputation, blocked, or
 // excess requests.
 func (n *Node) EnableGuardedExit(cfg GuardedExit) {
-	n.setExitHandler(cfg.Dial, cfg.authorizer())
+	n.setExitHandler(cfg.Dial, cfg.authorizer(), cfg.meterFor)
 }
 
 // authorizer builds the per-request ExitGuard check (shared by the TCP and UDP
@@ -308,6 +310,32 @@ func (cfg GuardedExit) authorizer() func(requesterID, target string) (func(), er
 	}
 }
 
+// meterFor returns a per-connection byte meter for requesterID, or nil when
+// bandwidth limiting is off (so the relay keeps its zero-overhead fast path).
+// The meter charges the guard's budget; the first time it trips it lowers the
+// requester's reputation and records a metric (once per connection), then reports
+// true so the relay is cut.
+func (cfg GuardedExit) meterFor(requesterID string) func(n int) bool {
+	if cfg.Guard == nil || !cfg.Guard.BandwidthLimited() {
+		return nil
+	}
+	var penalized sync.Once
+	return func(n int) bool {
+		over := cfg.Guard.Charge(requesterID, n)
+		if over {
+			penalized.Do(func() {
+				if cfg.Report != nil {
+					cfg.Report(requesterID, trust.OutcomeBlocked)
+				}
+				if cfg.Metrics != nil {
+					cfg.Metrics("bandwidth-tripped")
+				}
+			})
+		}
+		return over
+	}
+}
+
 // exitServeOptions are the exit's connection-lifecycle limits, applied to every
 // served stream to protect against slow/hung/idle peers (see ExitGuard / SECURITY).
 var exitServeOptions = tunnel.Options{
@@ -319,7 +347,7 @@ var exitServeOptions = tunnel.Options{
 
 // setExitHandler registers the tunnel stream handler, tracking exit load and
 // applying an optional per-request authorizer (ExitGuard).
-func (n *Node) setExitHandler(dial tunnel.DialFunc, authWithRequester func(requesterID, target string) (func(), error)) {
+func (n *Node) setExitHandler(dial tunnel.DialFunc, authWithRequester func(requesterID, target string) (func(), error), meterFor func(requesterID string) func(n int) bool) {
 	n.h.SetStreamHandler(TunnelProtocol, func(s network.Stream) {
 		requesterID := s.Conn().RemotePeer().String()
 		n.exitLoad.Add(1)
@@ -331,7 +359,11 @@ func (n *Node) setExitHandler(dial tunnel.DialFunc, authWithRequester func(reque
 				return authWithRequester(requesterID, target)
 			}
 		}
-		_ = tunnel.ServeExit(streamConn{s}, authorize, dial, exitServeOptions)
+		opts := exitServeOptions
+		if meterFor != nil {
+			opts.Meter = meterFor(requesterID)
+		}
+		_ = tunnel.ServeExit(streamConn{s}, authorize, dial, opts)
 	})
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/whatgate/whatgate/internal/bandwidth"
 	"github.com/whatgate/whatgate/internal/ratelimit"
 	"github.com/whatgate/whatgate/internal/trust"
 )
@@ -26,6 +27,7 @@ var (
 	ErrTooManyConns          = errors.New("exit: connection limit reached")
 	ErrTooManyRequesterConns = errors.New("exit: per-requester connection limit reached")
 	ErrRequesterRateLimited  = errors.New("exit: per-requester connection rate limit exceeded")
+	ErrBandwidthExceeded     = errors.New("exit: per-requester bandwidth budget exceeded")
 )
 
 // DefaultBlockedPorts returns ports an exit should refuse by default (e.g. SMTP,
@@ -53,6 +55,13 @@ type Policy struct {
 	// when unset (must be >= 1 to admit any request).
 	RequesterRatePerSec float64
 	RequesterBurst      float64
+	// RequesterBytesPerSec caps a single requester's sustained throughput
+	// (0 = unlimited), with RequesterByteBurst as the momentary allowance
+	// (defaults to RequesterBytesPerSec). When a requester exceeds it the breaker
+	// trips: its in-flight transfer is cut and new connections are refused until
+	// the byte budget refills. Unlike the connection limits, this bounds volume.
+	RequesterBytesPerSec float64
+	RequesterByteBurst   float64
 	// AllowPrivateTargets, when true, permits dialing private/loopback/link-local
 	// destinations. Default false blocks them (SSRF protection) — see
 	// DisallowedTargetIP and DialControl.
@@ -77,6 +86,7 @@ type Guard struct {
 	perReq map[string]int // active connections per requester ID
 
 	reqLimiter *ratelimit.Limiter // per-requester connection-rate limiter (nil = disabled)
+	bwLimiter  *bandwidth.Limiter // per-requester bandwidth limiter (nil = disabled)
 
 	domMu          sync.RWMutex
 	blockedDomains map[string]bool // normalized domains (static policy + threat feed)
@@ -93,6 +103,13 @@ func NewGuard(p Policy) *Guard {
 			burst = p.RequesterRatePerSec
 		}
 		g.reqLimiter = ratelimit.New(p.RequesterRatePerSec, burst)
+	}
+	if p.RequesterBytesPerSec > 0 {
+		burst := p.RequesterByteBurst
+		if burst <= 0 {
+			burst = p.RequesterBytesPerSec
+		}
+		g.bwLimiter = bandwidth.New(p.RequesterBytesPerSec, burst)
 	}
 	return g
 }
@@ -131,6 +148,20 @@ func normalizeHost(host string) string {
 // private/loopback targets (used by the UDP path to decide post-resolution
 // filtering).
 func (g *Guard) AllowsPrivateTargets() bool { return g.policy.AllowPrivateTargets }
+
+// BandwidthLimited reports whether per-requester bandwidth limiting is enabled,
+// so the data path can skip per-chunk accounting when it is off.
+func (g *Guard) BandwidthLimited() bool { return g.bwLimiter != nil }
+
+// Charge records n bytes relayed on behalf of requesterID and reports whether the
+// requester is now over its bandwidth budget (breaker tripped). It is a no-op
+// returning false when bandwidth limiting is disabled.
+func (g *Guard) Charge(requesterID string, n int) bool {
+	if g.bwLimiter == nil {
+		return false
+	}
+	return g.bwLimiter.Charge(requesterID, int64(n))
+}
 
 // StaticBlockedDomains returns a copy of the operator-configured blocked domains
 // (the baseline to merge a threat feed onto).
@@ -213,6 +244,11 @@ func (g *Guard) Authorize(req Request) (release func(), err error) {
 	// distinct control from the concurrency cap below.
 	if g.reqLimiter != nil && !g.reqLimiter.Allow(req.RequesterID) {
 		return nil, ErrRequesterRateLimited
+	}
+	// Breaker: a requester that blew its bandwidth budget is refused new
+	// connections until the budget refills.
+	if g.bwLimiter != nil && g.bwLimiter.Over(req.RequesterID) {
+		return nil, ErrBandwidthExceeded
 	}
 
 	g.mu.Lock()
