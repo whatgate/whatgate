@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/whatgate/whatgate/internal/authn"
 	"github.com/whatgate/whatgate/internal/discovery"
+	"github.com/whatgate/whatgate/internal/membership"
 	"github.com/whatgate/whatgate/internal/persist"
 	"github.com/whatgate/whatgate/internal/trust"
 )
@@ -54,7 +55,9 @@ type joinRequest struct {
 }
 
 type joinResponse struct {
-	Issuer string `json:"issuer"`
+	Issuer     string `json:"issuer"`
+	MemberCert []byte `json:"memberCert,omitempty"` // C1: signed member cert for the joining peer
+	IssuerCert []byte `json:"issuerCert,omitempty"` // the root-signed issuer cert authorizing the coordinator's issuer key
 }
 
 type registerRequest struct {
@@ -135,7 +138,19 @@ type Server struct {
 	signKey     crypto.PrivKey // if set, discovery responses are signed
 	dirSerial   uint64         // monotonic serial for signed directories
 	relaySerial uint64         // monotonic serial for signed relay advertisements
+
+	issuerMu     sync.Mutex
+	issuerKey    crypto.PrivKey // online, root-authorized issuer key (if set, join issues member certs)
+	issuerCert   []byte         // the root-signed issuer cert authorizing issuerKey
+	issuerID     string         // issuer identifier bound into issued member certs
+	memberSerial uint64         // monotonic serial for issued member certs
 }
+
+// memberCertTTL bounds how long an auto-issued member cert stays valid. Member
+// certs are long-lived credentials (unlike minute-level node records); a node
+// re-joins to renew. Revocation before expiry is the job of the revocation
+// checkpoint (C1.2).
+const memberCertTTL = 30 * 24 * time.Hour
 
 // SetSigningKey configures the control-plane key used to sign discovery
 // responses (currently the directory). Clients that pin the matching public key
@@ -195,6 +210,39 @@ func (s *Server) signRelay(payload []byte) (discovery.Signed, bool) {
 		return discovery.Signed{}, false
 	}
 	return obj, true
+}
+
+// SetIssuer configures the coordinator as an online, root-authorized issuer:
+// after a successful join it mints a {member} member cert for the joining peer,
+// signed by issuerKey, and returns it together with issuerCert (the root-signed
+// cert authorizing issuerKey). Nodes verify the chain against the pinned offline
+// root. Exit/relay authority is NOT granted here — only the offline root (or a
+// dual-approved process) may issue those.
+func (s *Server) SetIssuer(issuerKey crypto.PrivKey, issuerCert []byte, issuerID string) {
+	s.issuerMu.Lock()
+	defer s.issuerMu.Unlock()
+	s.issuerKey = issuerKey
+	s.issuerCert = issuerCert
+	s.issuerID = issuerID
+}
+
+// issueMemberCert mints a {member} cert for subject with the next monotonic
+// serial. Returns ok=false when no issuer is configured.
+func (s *Server) issueMemberCert(subject string) (memberCert, issuerCert []byte, ok bool) {
+	s.issuerMu.Lock()
+	defer s.issuerMu.Unlock()
+	if s.issuerKey == nil {
+		return nil, nil, false
+	}
+	s.memberSerial++
+	now := s.now()
+	mc, err := membership.SignMemberCert(s.issuerKey, subject, s.issuerID,
+		[]membership.Role{membership.RoleMember}, now, now.Add(memberCertTTL), s.memberSerial, 0)
+	if err != nil {
+		log.Printf("[coordinator] issue member cert: %v", err)
+		return nil, nil, false
+	}
+	return mc, s.issuerCert, true
 }
 
 // SetRelayInfo advertises a relay through the /relay endpoint.
@@ -532,7 +580,15 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.save() // admission changed
-	writeJSON(w, http.StatusOK, joinResponse{Issuer: issuer})
+	resp := joinResponse{Issuer: issuer}
+	// C1: if configured as an online issuer, hand the newly admitted peer a
+	// {member} credential (plus the root-signed issuer cert) so it can later
+	// prove membership on the decentralized-discovery plane.
+	if mc, ic, ok := s.issueMemberCert(req.PeerID); ok {
+		resp.MemberCert = mc
+		resp.IssuerCert = ic
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleRegister records a node's presence. The node must already be admitted.

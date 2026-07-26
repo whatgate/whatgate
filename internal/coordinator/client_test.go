@@ -16,12 +16,12 @@ func TestClientJoinRegisterDirectory(t *testing.T) {
 
 	c, id := newSignedClient(t, ts.URL)
 
-	issuer, err := c.Join("welcome", id)
+	adm, err := c.Join("welcome", id)
 	if err != nil {
 		t.Fatalf("Join: %v", err)
 	}
-	if issuer != "founder" {
-		t.Fatalf("issuer = %q, want founder", issuer)
+	if adm.Issuer != "founder" {
+		t.Fatalf("issuer = %q, want founder", adm.Issuer)
 	}
 
 	err = c.Register(NodeInfo{

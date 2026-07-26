@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/whatgate/whatgate/internal/coordinator"
 	"github.com/whatgate/whatgate/internal/discovery"
+	"github.com/whatgate/whatgate/internal/membership"
 	"github.com/whatgate/whatgate/internal/persist"
 	"github.com/whatgate/whatgate/internal/relay"
 )
@@ -46,6 +48,16 @@ func main() {
 	emitBootstrap := flag.String("emit-bootstrap", "", "sign a bootstrap list of the given comma-separated coordinator URLs (needs -signing-key), print it to stdout, and exit; host the output on an out-of-band channel (CDN/GitHub raw) as a node -bootstrap-url")
 	bootstrapSerial := flag.Uint64("bootstrap-serial", 0, "monotonic serial for -emit-bootstrap; must strictly increase across publications (older ones are rejected as rollbacks)")
 	bootstrapTTL := flag.Duration("bootstrap-ttl", 30*24*time.Hour, "how long a -emit-bootstrap list stays acceptable to nodes")
+	// C1 membership issuance.
+	emitIssuerCert := flag.Bool("emit-issuer-cert", false, "OFFLINE-ROOT mode: sign an issuer cert authorizing -issuer-pubkey for -issuer-roles (needs -root-key), print it to stdout, and exit; give the output to a coordinator as -issuer-cert")
+	rootKey := flag.String("root-key", "", "path to the OFFLINE root signing key (created if missing) used by -emit-issuer-cert; keep this key offline — it is the trust anchor")
+	issuerPubkey := flag.String("issuer-pubkey", "", "base64 public key of the online issuer to authorize (for -emit-issuer-cert; a coordinator prints its issuer public key on serve with -issuer-key)")
+	issuerRoles := flag.String("issuer-roles", "member", "comma-separated roles the issuer cert may grant: member,exit,relay (for -emit-issuer-cert; grant exit/relay only to trusted/dual-approved issuers)")
+	issuerID := flag.String("issuer-id", "coord-issuer", "issuer identifier bound into the emitted issuer cert")
+	issuerCertTTL := flag.Duration("issuer-cert-ttl", 365*24*time.Hour, "validity of the emitted issuer cert")
+	issuerCertSerial := flag.Uint64("issuer-cert-serial", 1, "monotonic serial for -emit-issuer-cert")
+	issuerKeyPath := flag.String("issuer-key", "", "path to the ONLINE issuer signing key (created if missing); with -issuer-cert, a successful join issues the peer a {member} cert")
+	issuerCertPath := flag.String("issuer-cert", "", "path to the root-signed issuer cert authorizing -issuer-key (produced by -emit-issuer-cert)")
 	flag.Parse()
 
 	if *showVersion {
@@ -68,6 +80,37 @@ func main() {
 		if err != nil {
 			log.Fatalf("emit bootstrap: %v", err)
 		}
+		fmt.Println(string(out))
+		return
+	}
+
+	// Offline-root mode: sign an issuer cert and exit. Run this on an OFFLINE
+	// machine holding the root key; hand the printed cert to a coordinator as
+	// -issuer-cert. The root is the trust anchor nodes ultimately pin (C1 §15).
+	if *emitIssuerCert {
+		if *rootKey == "" {
+			log.Fatal("coordinator: -emit-issuer-cert requires -root-key (keep it offline)")
+		}
+		if *issuerPubkey == "" {
+			log.Fatal("coordinator: -emit-issuer-cert requires -issuer-pubkey (a coordinator prints it on serve with -issuer-key)")
+		}
+		root, err := discovery.LoadOrCreateSigningKey(*rootKey)
+		if err != nil {
+			log.Fatalf("root key: %v", err)
+		}
+		issuerPub, err := discovery.DecodePublicKey(*issuerPubkey)
+		if err != nil {
+			log.Fatalf("bad -issuer-pubkey: %v", err)
+		}
+		now := time.Now()
+		out, err := membership.SignIssuerCert(root, issuerPub, *issuerID, parseRoles(*issuerRoles),
+			now, now.Add(*issuerCertTTL), *issuerCertSerial, 0)
+		if err != nil {
+			log.Fatalf("emit issuer cert: %v", err)
+		}
+		// Root public key to stderr so `> issuer-cert.json` captures only the cert;
+		// nodes ultimately pin this root to verify the whole credential chain.
+		fmt.Fprintln(os.Stderr, "root public key (pin on nodes to anchor the credential chain):", discovery.EncodePublicKey(root.GetPublic()))
 		fmt.Println(string(out))
 		return
 	}
@@ -104,6 +147,32 @@ func main() {
 		fmt.Printf("coordinator public key (share as node -coordinator-key): %s\n", discovery.EncodePublicKey(priv.GetPublic()))
 	} else {
 		fmt.Println("directory signing: DISABLED — nodes cannot authenticate the directory; set -signing-key in production")
+	}
+
+	// C1 membership issuance: as an online, root-authorized issuer, mint a
+	// {member} cert for each joining peer. Requires both the online issuer key and
+	// the root-signed issuer cert authorizing it.
+	if *issuerKeyPath != "" {
+		issuerPriv, err := discovery.LoadOrCreateSigningKey(*issuerKeyPath)
+		if err != nil {
+			log.Fatalf("issuer key: %v", err)
+		}
+		fmt.Printf("issuer public key (authorize offline: coordinator -emit-issuer-cert -root-key <root> -issuer-pubkey %s): %s\n",
+			discovery.EncodePublicKey(issuerPriv.GetPublic()), discovery.EncodePublicKey(issuerPriv.GetPublic()))
+		if *issuerCertPath == "" {
+			fmt.Println("WARNING: -issuer-key set without -issuer-cert; member-cert issuance DISABLED until a root-signed issuer cert is provided")
+		} else {
+			certBytes, err := os.ReadFile(*issuerCertPath)
+			if err != nil {
+				log.Fatalf("read issuer cert %s: %v", *issuerCertPath, err)
+			}
+			id, err := membership.IssuerCertID(certBytes)
+			if err != nil {
+				log.Fatalf("issuer cert: %v", err)
+			}
+			srv.SetIssuer(issuerPriv, certBytes, id)
+			fmt.Printf("member cert issuance: enabled (issuer=%s)\n", id)
+		}
 	}
 
 	// Co-locate a Circuit Relay v2 so nodes that cannot hole-punch still connect.
@@ -168,6 +237,18 @@ func splitEndpoints(s string) []string {
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// parseRoles parses a comma-separated role list into membership roles.
+func parseRoles(s string) []membership.Role {
+	parts := strings.Split(s, ",")
+	out := make([]membership.Role, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, membership.Role(p))
 		}
 	}
 	return out

@@ -169,6 +169,21 @@ func VerifyMemberCert(pinnedRoot crypto.PubKey, subject string, memberSigned, is
 	return mc, nil
 }
 
+// IssuerCertID reads the IssuerID out of a signed issuer cert without verifying
+// it — for a serving coordinator to bind the matching id into the member certs
+// it mints. Verification of the chain happens at the consuming node.
+func IssuerCertID(signed []byte) (string, error) {
+	var env discovery.Signed
+	if err := json.Unmarshal(signed, &env); err != nil {
+		return "", fmt.Errorf("issuer cert: not a signed envelope: %w", err)
+	}
+	var ic IssuerCert
+	if err := json.Unmarshal(env.Payload, &ic); err != nil {
+		return "", fmt.Errorf("issuer cert: bad payload: %w", err)
+	}
+	return ic.IssuerID, nil
+}
+
 // rolesSubsetOf reports whether every role in want is present in allowed.
 func rolesSubsetOf(want, allowed []Role) bool {
 	set := make(map[Role]struct{}, len(allowed))

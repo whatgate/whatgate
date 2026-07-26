@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -66,6 +67,7 @@ func main() {
 	coordKey := flag.String("coordinator-key", "", "pinned coordinator public key (base64, printed by the coordinator): the directory must be signed by it, else it is rejected — defeats a rogue/MITM coordinator")
 	coordCache := flag.String("coordinator-cache", "", "path to cache the last verified directory (requires -coordinator-key); served when every coordinator endpoint is unreachable, so a blocked coordinator doesn't instantly disconnect you")
 	bootstrapURL := flag.String("bootstrap-url", "", "out-of-band URL (CDN/GitHub raw) serving a signed bootstrap list (requires -coordinator-key); when every known coordinator is blocked at cold start, fetch it to self-heal onto fresh endpoints")
+	memberCertPath := flag.String("member-cert", "", "path to persist the member credential chain the coordinator issues on join (for Tier C decentralized discovery); owner-only")
 	invite := flag.String("invite", "", "invite code to redeem when joining via coordinator")
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
 	toRegion := flag.String("to", "", "desired exit region to discover via coordinator (client mode)")
@@ -332,7 +334,7 @@ func main() {
 	// Coordinator-based flow: join, register presence, discover exits.
 	if coord != nil {
 		if *invite != "" {
-			issuer, err := coord.Join(*invite, selfID)
+			adm, err := coord.Join(*invite, selfID)
 			if err != nil && *bootstrapURL != "" {
 				// Cold-start self-heal (C2): every known coordinator is unreachable,
 				// so pull a signed endpoint list from the out-of-band channel and
@@ -343,12 +345,22 @@ func main() {
 					log.Fatalf("bootstrap self-heal failed: %v (join error: %v)", berr, err)
 				}
 				fmt.Printf("bootstrap: healed onto %d endpoint(s), retrying join\n", len(coord.Endpoints()))
-				issuer, err = coord.Join(*invite, selfID)
+				adm, err = coord.Join(*invite, selfID)
 			}
 			if err != nil {
 				log.Fatalf("join via coordinator: %v", err)
 			}
-			fmt.Printf("joined network (vouched by %s)\n", issuer)
+			fmt.Printf("joined network (vouched by %s)\n", adm.Issuer)
+			// C1: persist the member credential chain the coordinator issued, so
+			// this node can later prove membership on the decentralized-discovery
+			// plane (Tier C). Best-effort; absence just means no issuer configured.
+			if len(adm.MemberCert) > 0 && *memberCertPath != "" {
+				if err := saveMemberCredential(*memberCertPath, adm); err != nil {
+					fmt.Printf("WARNING: could not save member credential: %v\n", err)
+				} else {
+					fmt.Printf("member credential: saved to %s\n", *memberCertPath)
+				}
+			}
 		}
 
 		if *group != "" {
@@ -783,4 +795,24 @@ func connectHostIPs(connect string) []string {
 		}
 	}
 	return refs
+}
+
+// saveMemberCredential persists the member credential chain (member cert +
+// root-signed issuer cert) the coordinator issued on join, owner-only and
+// atomically. The node presents this chain to prove membership on the Tier C
+// decentralized-discovery plane.
+func saveMemberCredential(path string, adm coordinator.JoinResult) error {
+	doc := struct {
+		MemberCert json.RawMessage `json:"memberCert"`
+		IssuerCert json.RawMessage `json:"issuerCert"`
+	}{MemberCert: adm.MemberCert, IssuerCert: adm.IssuerCert}
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

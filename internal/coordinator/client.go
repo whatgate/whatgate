@@ -138,17 +138,27 @@ func (c *Client) sign(action string) (authn.SignedAuth, error) {
 	return c.Signer(action)
 }
 
-// Join redeems an invite code to admit peerID, returning the vouching issuer.
-func (c *Client) Join(code, peerID string) (issuer string, err error) {
+// JoinResult is the result of a successful Join: the vouching issuer and, when
+// the coordinator is configured as a C1 online issuer, the peer's member cert
+// plus the root-signed issuer cert that authorizes it (empty otherwise).
+type JoinResult struct {
+	Issuer     string
+	MemberCert []byte
+	IssuerCert []byte
+}
+
+// Join redeems an invite code to admit peerID, returning the join result
+// (vouching issuer and, if issued, the member credential chain).
+func (c *Client) Join(code, peerID string) (JoinResult, error) {
 	auth, err := c.sign("join")
 	if err != nil {
-		return "", err
+		return JoinResult{}, err
 	}
 	var resp joinResponse
 	if err := c.postJSON("/join", joinRequest{Code: code, PeerID: peerID, Auth: auth}, &resp); err != nil {
-		return "", err
+		return JoinResult{}, err
 	}
-	return resp.Issuer, nil
+	return JoinResult{Issuer: resp.Issuer, MemberCert: resp.MemberCert, IssuerCert: resp.IssuerCert}, nil
 }
 
 // Register advertises the node's presence in the directory.

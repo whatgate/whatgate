@@ -148,6 +148,28 @@ func TestRejectsRevokedByEpoch(t *testing.T) {
 	}
 }
 
+// IssuerCertID reads the issuer identifier out of a signed issuer cert (so a
+// serving coordinator can bind the matching id into the member certs it mints).
+func TestIssuerCertID(t *testing.T) {
+	rootPriv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, issuerPub, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := SignIssuerCert(rootPriv, issuerPub, "coord-issuer", []Role{RoleMember},
+		time.Now(), time.Now().Add(time.Hour), 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := IssuerCertID(cert)
+	if err != nil || id != "coord-issuer" {
+		t.Fatalf("IssuerCertID = %q, %v; want coord-issuer", id, err)
+	}
+}
+
 // A tampered member payload (signature no longer matches) is rejected.
 func TestRejectsTamperedMemberPayload(t *testing.T) {
 	c := buildChain(t, chainCfg{issuerRoles: []Role{RoleMember, RoleExit}, memberRoles: []Role{RoleMember}})
