@@ -83,6 +83,7 @@ func main() {
 	rankTrustW := flag.Float64("rank-trust-weight", 0, "weighted exit ranking: trust weight (set any -rank-*-weight to use weighted composite scoring instead of the default trust→latency→load order)")
 	rankLatencyW := flag.Float64("rank-latency-weight", 0, "weighted exit ranking: latency weight (lower latency preferred)")
 	rankLoadW := flag.Float64("rank-load-weight", 0, "weighted exit ranking: load weight (lower load preferred)")
+	latencyAlpha := flag.Float64("latency-ewma-alpha", 0.3, "exit-latency smoothing: EWMA weight of each new probe (0<a<=1; 1 disables smoothing so the latest probe is used as-is). Damps single slow probes across re-discovery rounds.")
 	exitScope := flag.String("exit-scope", "open", "ExitGuard: whose traffic to serve as exit: conservative|open")
 	blockPorts := flag.String("block-ports", "", "ExitGuard: extra destination ports to block, comma-separated (SMTP ports blocked by default)")
 	blockDomains := flag.String("block-domains", "", "ExitGuard: destination domains to block, comma-separated")
@@ -438,8 +439,11 @@ func main() {
 			serveSOCKS(ctx, *socksAddr, sw, openUDP)
 
 			rankWeights := routing.Weights{Trust: *rankTrustW, Latency: *rankLatencyW, Load: *rankLoadW}
+			// One tracker for the node's lifetime so latency smoothing accumulates
+			// across successive re-discovery rounds.
+			latTracker := routing.NewLatencyTracker(*latencyAlpha)
 			connectIn := func(sc trust.Scope, region string) (string, error) {
-				ai, err := discoverExit(ctx, n, coord, region, selfID, sc, dd, rankWeights)
+				ai, err := discoverExit(ctx, n, coord, region, selfID, sc, dd, rankWeights, latTracker)
 				if err != nil {
 					return "", err
 				}
@@ -673,7 +677,7 @@ func serveSOCKS(ctx context.Context, socksAddr string, dialer proxy.Dialer, open
 // discoverExit queries the directory and picks the best exit in the desired
 // region within the user's trust scope, ranked by trust, then measured latency,
 // then reported load.
-func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, region, selfID string, scope trust.Scope, dd *dhtDiscovery, w routing.Weights) (peer.AddrInfo, error) {
+func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, region, selfID string, scope trust.Scope, dd *dhtDiscovery, w routing.Weights, lat *routing.LatencyTracker) (peer.AddrInfo, error) {
 	nodes, tiers, err := c.DirectoryFor(selfID)
 	if err != nil {
 		// With Tier C enabled we can still try DHT-only discovery when the
@@ -712,9 +716,12 @@ func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, regi
 		}
 		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		if rtt, err := n.Ping(pctx, ai); err == nil {
-			latency[nd.PeerID] = int(rtt.Milliseconds())
+			// Smooth reachable samples with EWMA across re-discovery rounds.
+			latency[nd.PeerID] = lat.Observe(nd.PeerID, int(rtt.Milliseconds()))
 		} else {
-			latency[nd.PeerID] = 1 << 30 // unreachable: rank last
+			// Unreachable this round: rank last, but don't poison the smoothed
+			// history so a recovered exit isn't penalized for many rounds.
+			latency[nd.PeerID] = 1 << 30
 		}
 		cancel()
 	}
