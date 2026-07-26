@@ -77,7 +77,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 | P1 | ~~**CI**~~ ✅ **已完成** | `.github/workflows/ci.yml`：push/PR 自动 `gofmt`/`vet`/`test`/默认构建 + `-tags tun` 构建。 |
 | P1 | ~~**交叉编译与发布**~~ ✅ **已完成（代码签名待做）** | `scripts/build-release.sh` 一键交叉编译六平台（Win/mac/Linux × amd64/arm64）的 coordinator/node/node-tun，打包 + SHA256SUMS；`.github/workflows/release.yml` 在推 `v*` tag 时自动构建并 `gh release create`。二进制经 `-ldflags -X main.version` 版本戳（`-version` 可查）。**剩：代码签名/公证**（Windows Authenticode、macOS notarization）。 |
 | P1 | **安全评审** | 对隧道、协调协议、ExitGuard 做一次专门的安全审查。 |
-| P2 | **可观测性** | 结构化日志 + 指标（连接数、选路、拒绝原因等），便于运维。 |
+| P2 | **可观测性** `partial` | **指标 ✅**：`internal/metrics` 零依赖计数器注册表（`Inc`/`Add`/`Snapshot`，`flat name→count`），node `-metrics-addr` 以 JSON 暴露 `/metrics`；出口经 `GuardedExit.Metrics` 钩子记 `exit_served` 与按原因分类的 `exit_denied:<reason>`（untrusted/low-reputation/blocked-port/blocked-domain/blocked-private/too-many-conns/too-many-requester-conns/requester-rate）。**剩：结构化日志**（JSON 行日志替代 fmt.Printf）+ 更多埋点（选路/连接数）。 |
 
 ---
 

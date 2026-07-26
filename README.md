@@ -160,6 +160,21 @@ node -coordinator http://host:8080 -invite welcome -exit -region JP \
 - `-audit-log <file>`：把每次服务/拒绝（时间/请求方/目标/结果）以 JSON Lines 追加落盘，供事后追责
 - `-threat-feed <url|file>`：拉取已知恶意域名清单并入黑名单，定期刷新（`-threat-feed-interval`）
 
+### 可观测性（指标）
+
+加 `-metrics-addr` 让 node 以 JSON 暴露运维计数器（`/metrics`）。出口会记录服务量与**按原因分类的拒绝量**，便于确认限流/隔离/信任策略是否在按预期生效：
+
+```bash
+node ... -exit -metrics-addr 127.0.0.1:9090
+curl -s http://127.0.0.1:9090/metrics
+# {
+#   "exit_served": 128,
+#   "exit_denied:untrusted": 12,
+#   "exit_denied:blocked-port": 3,
+#   "exit_denied:requester-rate": 5
+# }
+```
+
 ### 配置文件
 
 flag 较多时可把它们写进一个 JSON 文件，用 `-config` 加载——**键就是 flag 名**，命令行上显式给出的 flag 覆盖文件里的同名项（优先级：命令行 > 配置文件 > 默认值）。未知键会报错（防拼写错误）。node 与 coordinator 都支持。

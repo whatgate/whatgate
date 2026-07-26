@@ -223,6 +223,34 @@ type GuardedExit struct {
 	// Audit, if non-nil, records each request (served or denied) for local
 	// accountability. outcome is "served" or "denied: <reason>".
 	Audit func(requesterID, target, outcome string)
+	// Metrics, if non-nil, receives a short outcome label per request for
+	// operational counters ("served", or "denied:<reason>"). Must not block.
+	Metrics func(event string)
+}
+
+// denyReason maps a guard error to a short, stable metric label (no requester or
+// target detail, so the counter cardinality stays bounded).
+func denyReason(err error) string {
+	switch {
+	case errors.Is(err, exit.ErrUntrustedRequester):
+		return "denied:untrusted"
+	case errors.Is(err, exit.ErrLowReputation):
+		return "denied:low-reputation"
+	case errors.Is(err, exit.ErrBlockedPort):
+		return "denied:blocked-port"
+	case errors.Is(err, exit.ErrBlockedDomain):
+		return "denied:blocked-domain"
+	case errors.Is(err, exit.ErrBlockedPrivateTarget):
+		return "denied:blocked-private"
+	case errors.Is(err, exit.ErrTooManyConns):
+		return "denied:too-many-conns"
+	case errors.Is(err, exit.ErrTooManyRequesterConns):
+		return "denied:too-many-requester-conns"
+	case errors.Is(err, exit.ErrRequesterRateLimited):
+		return "denied:requester-rate"
+	default:
+		return "denied:other"
+	}
 }
 
 // EnableGuardedExit serves as a TCP exit, authorizing every request through
@@ -268,6 +296,13 @@ func (cfg GuardedExit) authorizer() func(requesterID, target string) (func(), er
 				outcome = "denied: " + err.Error()
 			}
 			cfg.Audit(requesterID, target, outcome)
+		}
+		if cfg.Metrics != nil {
+			if err == nil {
+				cfg.Metrics("served")
+			} else {
+				cfg.Metrics(denyReason(err))
+			}
 		}
 		return release, err
 	}

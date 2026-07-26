@@ -47,6 +47,7 @@ import (
 	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/exit"
 	"github.com/whatgate/whatgate/internal/membership"
+	"github.com/whatgate/whatgate/internal/metrics"
 	"github.com/whatgate/whatgate/internal/node"
 	"github.com/whatgate/whatgate/internal/proxy"
 	"github.com/whatgate/whatgate/internal/routing"
@@ -96,6 +97,7 @@ func main() {
 	minReputation := flag.Int("min-reputation", -1_000_000_000, "ExitGuard: refuse requesters whose reputation is below this (default effectively disabled)")
 	allowPrivateTargets := flag.Bool("allow-private-targets", false, "ExitGuard: allow serving requests to private/loopback/link-local addresses (default false blocks SSRF to your LAN, localhost, and cloud metadata)")
 	auditLog := flag.String("audit-log", "", "ExitGuard: append a JSON-lines record of served/denied requests to this file (accountability)")
+	metricsAddr := flag.String("metrics-addr", "", "if set, serve operational counters as JSON at http://<addr>/metrics (e.g. 127.0.0.1:9090): exit served/denied-by-reason, etc.")
 	threatFeed := flag.String("threat-feed", "", "ExitGuard: URL or file of known-malicious domains to block (merged with -block-domains)")
 	threatFeedInterval := flag.Duration("threat-feed-interval", time.Hour, "how often to refresh -threat-feed (0 = fetch once at startup)")
 	webAddr := flag.String("web", "", "serve a local status dashboard at this address, e.g. 127.0.0.1:7070")
@@ -198,6 +200,21 @@ func main() {
 	}
 	defer n.Close()
 	selfID := n.ID().String()
+
+	// Operational counters (exit outcomes, etc.), optionally scraped over HTTP.
+	metricsReg := metrics.NewRegistry()
+	if *metricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", metricsReg.Handler())
+		ms := &http.Server{Addr: *metricsAddr, Handler: mux}
+		go func() {
+			if err := ms.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("metrics server: %v", err)
+			}
+		}()
+		go func() { <-ctx.Done(); _ = ms.Close() }()
+		fmt.Printf("metrics: http://%s/metrics\n", *metricsAddr)
+	}
 
 	// Live client state for the dashboard (updated on connect / region switch).
 	var (
@@ -320,12 +337,13 @@ func main() {
 			fmt.Printf("audit log: %s\n", *auditLog)
 		}
 		exitCfg := node.GuardedExit{
-			Dial:   dial,
-			Guard:  guard,
-			TierOf: tierOf,
-			RepOf:  repOf,
-			Report: report,
-			Audit:  auditFn,
+			Dial:    dial,
+			Guard:   guard,
+			TierOf:  tierOf,
+			RepOf:   repOf,
+			Report:  report,
+			Audit:   auditFn,
+			Metrics: func(e string) { metricsReg.Inc("exit_" + e) },
 		}
 		var (
 			exitMu sync.Mutex
