@@ -1,217 +1,198 @@
 # WhatGate
 
-一个**邀请制的 P2P 代理分享网络**：所有在线用户组成一张网，每个节点**既是客户端也是出口**。用户可以在网内按地区寻找最合适的出口来访问受地域限制的内容，同时（在知情自愿的前提下）也充当别人的出口。
+**一个邀请制的 P2P 代理分享网络。** 一群互相信任的人组成一张网，每个人既能借用别人在其他地区的出口访问受地域限制的内容，也能（在自己愿意时）成为别人的出口。没有中心服务器持有你的流量——代理数据在节点之间点对点加密直连。
 
-> ⚠️ **安全与合规底线**：成为别人的出口**默认关闭**，必须用户显式开启。出口方拥有信任范围限定、流量策略、限额熔断与本地留痕等保护机制，用于抵御被非法之徒滥用的风险。请在遵守当地法律法规的前提下使用。
+> ⚠️ **成为别人的出口默认是关闭的**，必须你主动开启。开启后有一整套保护机制（信任范围、流量策略、限额熔断、本地留痕）帮你抵御滥用。请在遵守当地法律法规的前提下使用。
 
-架构细节见 [docs/architecture.md](docs/architecture.md)。
+- **你能用它做什么**：连上一个你信任的人在目标地区的出口，让浏览器/应用的流量从那里出网。
+- **为什么是 P2P**：出口是**住宅 IP**（不是机房 IP 段），更难被目标站点识别为代理；发现与准入靠邀请制，不对公众开放。
+- **拿到就能跑**：编译为**单个静态二进制**，下载解压即用，不需要安装 Go 或任何运行时。
 
-## 核心设计
+技术栈 Go + [libp2p](https://libp2p.io/)。完整架构见 [docs/architecture.md](docs/architecture.md)。
 
-- **场景**：地理位置解锁（借用目标地区节点的出口 IP）。
-- **信任结构**：分层联邦——全局「大网」之下保留「小网」（Group），小网内部与小网之间可互相邀请、认证、评声誉。
-- **两个平面**：
-  - **控制面**（Coordinator，HTTP）：只碰元数据——邀请准入、节点目录、中继广播。看不到业务流量。
-  - **数据面**（libp2p）：代理流量**点对点加密直连**；打洞失败时走 Circuit Relay v2 中继兜底。
-- **协议**：TCP（SOCKS5 CONNECT）与 UDP（SOCKS5 UDP ASSOCIATE，覆盖 DNS/游戏/音视频）均经加密隧道转发。
-- **技术栈**：Go + [libp2p](https://libp2p.io/)。
-- **分发**：编译为单个静态二进制，终端用户下载即用，无需安装任何运行时。
+---
 
-## 快速开始
+## 快速上手：用它上网
 
-### 下载预编译二进制（推荐）
+假设有人给了你**协调器地址**、**邀请码**，以及（推荐）协调器启动时打印的**协调器公钥**。
 
-到 [**Releases**](https://github.com/whatgate/whatgate/releases) 下载对应平台的压缩包（Windows/macOS/Linux，amd64 与 arm64），解压即用——**无需安装 Go 或任何运行时**。每个包内含：
+**1. 下载。** 到 [Releases](https://github.com/whatgate/whatgate/releases) 下对应平台的包（Windows/macOS/Linux × amd64/arm64），解压。里面的 `node` 就是你要用的程序（`node -version` 看版本，`SHA256SUMS` 可校验完整性）。
 
-- `coordinator` — 协调服务器
-- `node` — 参与节点（精简版：SOCKS5 代理）
-- `node-tun` — 参与节点（全局 TUN/VPN 模式；运行需管理员/root，Windows 另需 `wintun.dll`）
-
-用 `SHA256SUMS` 可校验完整性；`node -version` / `coordinator -version` 打印版本。
-
-> 维护者发布新版本：`git tag v0.1.0 && git push origin v0.1.0`，GitHub Actions（[`.github/workflows/release.yml`](.github/workflows/release.yml)）会自动交叉编译六平台并创建 Release。
-
-### 从源码构建
+**2. 连上网络，按地区自动选出口。**
 
 ```bash
-go build -o bin/ ./...
+# -to JP：想要日本出口；-socks：本地 SOCKS5 代理监听地址
+# -trust-scope：你愿意用谁的出口（conservative=只用信任圈内的；open=也用陌生人的）
+node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> \
+     -invite <邀请码> -to JP -trust-scope open -socks 127.0.0.1:1080
 ```
 
-产出 `bin/coordinator` 与 `bin/node`（Windows 为 `.exe`）。
-
-全局 TUN 模式（可选，体积更大、需管理员权限运行）：
+**3. 让应用走这个代理。** 把应用的 SOCKS5 代理指向 `127.0.0.1:1080`，并确保**由代理远端解析域名**（这样才能真正解锁、且不泄漏你在查哪些站点）：
 
 ```bash
-go build -tags tun -o bin/node-tun ./cmd/node
+# --socks5-hostname = 远端解析（正确）；不要用 --socks5（本地解析，会泄漏 DNS）
+curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org   # 返回的应是出口的 IP
 ```
 
-（运行方式与平台前置见 [docs/tun-and-mobile.md](docs/tun-and-mobile.md)。）
+> 浏览器：Firefox 设 `network.proxy.socks_remote_dns = true`；Chrome 经 SOCKS5 时默认远端解析。DNS 解析模型与防泄漏详见 [docs/dns.md](docs/dns.md)。
 
-一键交叉编译全平台发布包（产出到 `dist/`）：
+### 想先试一下，手头没有协调器？
 
-```bash
-scripts/build-release.sh v0.1.0
-```
-
-### 方式 A：手动直连（无需协调器）
+两台机器（或两个终端）直接连，不需要协调器：
 
 ```bash
-# 终端 1：起一个出口节点，复制它打印的某个 /p2p/ 多地址
-node -exit
-
-# 终端 2：起客户端，通过该出口建隧道
-node -connect <出口多地址> -socks 127.0.0.1:1080
-
-# 验证流量确实从出口出网（返回的应是出口的公网 IP）
+node -exit                                          # 终端 1：起个出口，复制它打印的某个 /p2p/ 多地址
+node -connect <出口多地址> -socks 127.0.0.1:1080     # 终端 2：经它建隧道
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```
 
-### 方式 B：经协调器发现（邀请准入 + 按地区选出口）
+### 图形界面（可选）
+
+给 `node` 加 `-web 127.0.0.1:7070`，浏览器打开即可看实时状态并**运行时操作**：切换出口地区、一键开关"作为出口"、加入/创建/背书小网——都不用重启。没给 `-trust-scope` 时，首次打开会有**信任范围向导**解释风险后让你选。
 
 ```bash
-# 协调器（兼跑中继），播种邀请码；-state 让准入/小网/声誉跨重启留存
-# 声誉每小时向 0 衰减（-reputation-decay），被罚节点自动恢复
-# 生产务必启用 TLS（-tls-cert/-tls-key，或置于 TLS 反代后），否则邀请码/小网口令明文过网
-# -signing-key 让协调器签名目录响应，启动会打印“协调器公钥”，把它作为节点的 -coordinator-key
-coordinator -addr :8080 -invite welcome -state ./coordinator-state.json -signing-key ./coordinator-signing.key
-
-# 出口节点：加入并注册为某地区(如 JP)出口（-coordinator-key 钉住协调器公钥）
-node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> -invite welcome -exit -region JP
-
-# 客户端：加入并按地区自动发现出口（多协调器逗号分隔可故障切换；-coordinator-cache 缓存目录抗断线）
-node -coordinator https://a:8080,https://b:8080 -coordinator-key <协调器公钥> -coordinator-cache ./dir.cache -invite welcome -to JP -socks 127.0.0.1:1080
-
-curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
+node -coordinator https://<host>:8080 -coordinator-key <公钥> -invite <邀请码> -to JP -web 127.0.0.1:7070
 ```
 
-> 🛡️ **抗封锁（A0/A1/A3/A4/C2；C1 见下）**：
-> - **响应认证（A0）**：协调器 `-signing-key` 对**目录响应与中继地址**签名；节点 `-coordinator-key` 钉住其公钥后，**校验签名并拒绝**未签名/别的密钥签名/被回滚（旧序号）的目录与中继——协调器被 MITM 或换成恶意镜像也无法把你导向敌手出口或对手控制的中继。未钉公钥会告警。
-> - **多端点故障切换（A1）**：`-coordinator` 逗号分隔多个地址；某个被封（连不上）自动切下一个，"业务错误"（能连但拒）则如实上抛不误切。为真正独立，多个端点应跨不同故障域（ASN/DNS 商/CDN/运营者）。
-> - **本地目录缓存（A3）**：`-coordinator-cache`（需 `-coordinator-key`）把**已验签**的目录落盘（仅本人可读）；协调器全被封时用缓存续命，避免"一封就断"。缓存仍受签名/过期/回滚校验，过期即拒；用缓存时会打印告警。
-> - **TLS（`https://`）** 另外保护控制面**机密性**（问了哪些出口不外泄），与签名互补。
->
-> - **端口伪装（A4）**：`-listen` 支持逗号分隔多地址；加 `/ip4/0.0.0.0/tcp/443/ws` 让数据面骑 **:443** 像 web 流量。这只是**粗筛级伪装**（非探测抗性）；要真像 HTTPS 需 `/tls/ws`+证书或 TLS 反代，多数住宅节点无公网入站则保持拨号-only 经中继。
-> - **带外引导自愈（C2）**：运营者 `coordinator -emit-bootstrap "https://a:8080,https://b:8080" -signing-key ...` 用钉扎密钥离线签一份端点清单（打印 JSON），托管到 CDN/GitHub raw 等**难封渠道**；节点 `-bootstrap-url <该地址>`（需 `-coordinator-key`）在**所有已知协调器都被封**时拉取该清单、**验签通过后切到新端点重试**——冷启动 join 与运行中目录获取**都会自愈**（返场节点亦然），协调器整批被封也能自我修复。篡改的 CDN 无法投毒（信任只来自签名）；未钉公钥则拒绝（不认证清单本身是投毒面）。
->
-> 整体设计与分阶段路线图（含 Tier B 探测抗性、Tier C 去中心化发现）见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
+---
 
-### 去中心化发现（Tier C1，🧪 实验性）
+## 成为出口：分享你的出口（安全第一）
 
-当协调器（及其多端点/缓存/带外清单）**全部失效**时，节点还能经一张**私有认证 DHT**发现并连上出口——发现不再依赖任何单台服务器。信任锚是一把**离线根密钥**：它签发协调器用的"在线受限 issuer"，issuer 在准入时给成员发**成员证书**，出口在 DHT 上广告的记录都要回链到这把根才被采信。
-
-> ⚠️ **实验性**：`-dht` 路径仅经编译 + 单元测试 + 本地单机烟测验证；**门控/中继/DHT/NAT 打洞的真实交互、以及"断协调器仍能经 DHT 出网"需两台异网机器端到端验证**（与 TUN/跨 NAT 一致）。默认关闭，不影响常规使用。
+加 `-exit` 就会开始为别人转发流量。**这意味着别人访问的目标会看到你的 IP**，所以出口默认带一整套保护（ExitGuard），你可以按需收紧：
 
 ```bash
-# 1) 离线机（保管根密钥）：为协调器的在线 issuer 公钥签一张授权 {member} 的 issuer 证书。
-#    先在协调器机上 `coordinator -issuer-key ./issuer.key`（会打印 issuer 公钥），把它填到 -issuer-pubkey；
-#    stderr 打印的“根公钥”就是节点要钉的 -root-key。
-coordinator -emit-issuer-cert -root-key ./root.key \
-  -issuer-pubkey <issuer公钥> -issuer-roles member -issuer-id coord-issuer > issuer-cert.json
-
-# 2) 协调器（在线）：带上 issuer 私钥 + 上一步的根签证书；此后每次 join 都给成员发一张 {member} 证书。
-coordinator -addr :8080 -invite welcome -signing-key ./coordinator-signing.key \
-  -issuer-key ./issuer.key -issuer-cert ./issuer-cert.json
-
-# 3) 节点：钉住根公钥、开启 DHT。join 时领到成员证书（-member-cert 落盘）；
-#    协调器可达时走目录，全被封时也能经私有 DHT 发现已验证出口。
-node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> -invite welcome \
-  -dht -root-key <根公钥> -member-cert ./member.cred -to JP -socks 127.0.0.1:1080
-
-# 撤销：离线根签一份撤销 checkpoint（单调版本、带陈旧上限），经难封渠道分发。
-coordinator -emit-revocation -root-key ./root.key \
-  -revoke-subjects <被撤销PeerID> -revocation-version 2 > revocation.json
-```
-
-- **出口角色**须离线根/双签授权（在线 issuer 只能签 `{member}`，签不出 `{exit}`）：给某 issuer 加 `-issuer-roles member,exit` 才能签发出口证书，再据此让出口在 DHT 上广告。
-- 私有 DHT 上**非成员的记录一律不采信**（回链根验签 + 角色核对 + 反回滚 + SSRF 地址过滤 + equivocation 隔离）；DHT 发现的出口标为"陌生"，**保守信任范围下自动排除**（DHT 不提供"推荐"，那只来自协调器的权威声誉）。
-
-设计与对手驱动评审见 **[docs/c1-decentralized-discovery.md](docs/c1-decentralized-discovery.md)**。
-
-### 本地状态面板
-
-任意节点加 `-web` 即可在浏览器查看实时状态并**运行时操作**：切换出口地区、一键开关"作为出口"（均无需重启）。客户端若没给 `-trust-scope`，首次打开面板会弹出**信任范围向导**（解释风险后让你选保守/开放）再连接出口。面板还能**管理小网**（加入/创建、给小网背书、查看我的小网）：
-
-```bash
-node -coordinator http://host:8080 -invite welcome -to JP -trust-scope open -web 127.0.0.1:7070
-# 浏览器打开 http://127.0.0.1:7070
-```
-
-### 出口保护（ExitGuard）
-
-作为出口时可加保护策略，抵御被陌生人滥用：
-
-```bash
-# 只给自己小网/已认证小网当出口；封禁高危端口；限并发
-node -coordinator http://host:8080 -invite welcome -exit -region JP \
+# 只给自己的小网当出口、封高危端口、限并发与带宽
+node -coordinator https://<host>:8080 -coordinator-key <公钥> -invite <邀请码> \
+     -exit -region JP \
      -group myfriends -group-secret ourSecret \
      -exit-scope conservative \
-     -block-domains evil.example.com \
-     -max-conns 50
+     -max-conns 50 -requester-bandwidth 5000000
 ```
 
-- `-group` + `-group-secret`：加入小网（首个加入者设口令；成员用同一口令自证入组，陌生人无口令进不来）
-- `-exit-scope conservative`：只服务信任圈内的请求者（陌生人被拒）
-- SMTP 端口（25/465/587）默认封禁；`-block-ports` 追加
-- `-block-domains`：目标黑名单——大小写/尾点不敏感，**自动覆盖子域**（封 `evil.com` 也封 `x.evil.com`），条目也可写 IP 或 CIDR（如 `203.0.113.0/24`）
-- `-max-conns`：最大并发连接数；`-max-conns-per-requester`：单个请求方的并发上限（防单点耗尽出口）；`-requester-rate`（配 `-requester-burst`）：单个请求方每秒建连速率上限，挡住"快开快关、绕过并发上限"的 churn 型滥用
-- `-requester-bandwidth`（配 `-requester-bandwidth-burst`，字节/秒）：单个请求方吞吐上限（**熔断**）——超预算即切断当前传输、拒绝其新连接、并下调其声誉，字节预算随时间自动回补恢复；限的是**流量**而非连接数（TCP 与 UDP 出口共用同一预算，UDP 双向计量、超限拆隧道）
-- 出口默认对每条隧道加**超时**（收目标 10s、拨号 15s），防 slowloris/挂死拖垮
-- **SSRF 防护（默认开启）**：出口默认拒绝连接私有/环回/链路本地地址（你的 LAN、`127.0.0.1`、云元数据 `169.254.169.254`）——IP 字面量在授权时拒，域名在拨号后按解析到的真实 IP 拒（防 DNS rebinding）；确需时用 `-allow-private-targets` 放开
-- `-min-reputation`：拒绝声誉低于阈值的请求方（滥用者访问被封目标会被扣分，随后被各出口拒服务；默认禁用）
-- `-audit-log <file>`：把每次服务/拒绝（时间/请求方/目标/结果）以 JSON Lines 追加落盘，供事后追责
-- `-threat-feed <url|file>`：拉取已知恶意域名清单并入黑名单，定期刷新（`-threat-feed-interval`）
-- `-dns-server <host[:port]>`：出口用指定的可信解析器解析主机名目标（隔离本地 DNS 投毒/审查），解析仍在出口侧；DNS 解析模型与防泄漏见 **[docs/dns.md](docs/dns.md)**
+**你能控制谁用、用来做什么：**
 
-### 可观测性（指标）
+| 想做什么 | 用哪个 |
+|---|---|
+| 只服务信任圈内的人（拒陌生人） | `-exit-scope conservative` |
+| 只和特定小网互信 | `-group` + `-group-secret`（首个加入者设口令，陌生人无口令进不来） |
+| 拒绝低声誉/曾滥用的请求方 | `-min-reputation`（滥用者访问被封目标会被扣分，随后被各出口拒服务） |
+| 封目标端口 | SMTP（25/465/587）默认封；`-block-ports` 追加 |
+| 封目标域名/IP | `-block-domains`（大小写/尾点不敏感，**自动覆盖子域**，也支持 IP/CIDR） |
+| 自动拉黑已知恶意域名 | `-threat-feed <url\|file>`（定期刷新） |
 
-**结构化日志**：node/coordinator 都支持 `-log-format json`——每行一个 JSON 对象（`level`/`msg`/结构化字段），便于用日志采集器过滤/聚合运营与安全事件；默认 `text` 为人类可读。
+**防被当成免费/危险资源（默认或按需开启）：**
 
-**指标**：加 `-metrics-addr` 让 node 以 JSON 暴露运维计数器（`/metrics`）。出口会记录服务量与**按原因分类的拒绝量**，便于确认限流/隔离/信任策略是否在按预期生效：
+- **限量**：`-max-conns`（总并发）、`-max-conns-per-requester`（单人并发）、`-requester-rate`（单人建连速率，挡快开快关）、`-requester-bandwidth`（单人吞吐上限，**超了就熔断**：切断当前传输、拒其新连接、并下调其声誉，预算随时间自动回补；TCP/UDP 共用一份预算）。
+- **不被拿去打内网**（SSRF 防护，**默认开启**）：出口拒绝连接私有/环回/链路本地地址（你的 LAN、`127.0.0.1`、云元数据 `169.254.169.254`）；域名按解析到的真实 IP 判定（防 DNS rebinding）。确需放开用 `-allow-private-targets`。
+- **防挂死拖垮**：每条隧道默认带超时（收目标 10s、拨号 15s）。
+- **可追溯**：`-audit-log <file>` 把每次服务/拒绝（时间/请求方/目标/结果）以 JSON Lines 落盘，供事后追责。
+- **用可信 DNS 出网**：`-dns-server <host[:port]>` 让出口用指定解析器（隔离本地 DNS 投毒/审查），解析仍在出口侧。见 [docs/dns.md](docs/dns.md)。
+
+---
+
+## 自己搭一张网（运营者）
+
+起一个协调器就有了自己的网。它只碰**元数据**（邀请准入、节点目录、中继广播），**看不到代理流量**。
 
 ```bash
-node ... -exit -metrics-addr 127.0.0.1:9090
-curl -s http://127.0.0.1:9090/metrics
-# {
-#   "exit_served": 128,
-#   "exit_denied:untrusted": 12,
-#   "exit_denied:blocked-port": 3,
-#   "exit_denied:requester-rate": 5
-# }
+coordinator -addr :8080 -invite welcome -state ./state.json -signing-key ./signing.key
 ```
 
-### 配置文件
+把启动打印的**邀请码**发给你要接纳的人，把**协调器公钥**也给他们（作为 `-coordinator-key`）。出口方与客户端就能加入了（见上面两节）。
 
-flag 较多时可把它们写进一个 JSON 文件，用 `-config` 加载——**键就是 flag 名**，命令行上显式给出的 flag 覆盖文件里的同名项（优先级：命令行 > 配置文件 > 默认值）。未知键会报错（防拼写错误）。node 与 coordinator 都支持。
+**上生产前，请逐条对照：**
+
+- **加密控制面**：`-tls-cert`/`-tls-key`（或置于 TLS 反代后），否则邀请码/小网口令**明文过网**。
+- **签名目录**：`-signing-key` 让协调器对目录与中继地址签名；节点钉住 `-coordinator-key` 后就能拒绝被 MITM 或换成恶意镜像的协调器。**强烈建议**。
+- **抗刷注册**：`-rate-limit`（按 IP 限速）、`-sybil-max-identities`（同 IP 攒太多身份就隔离）。**若把协调器放在 CDN/反代后**，必须同时设 `-trusted-proxies <IP/CIDR>`，否则所有用户会被当成同一个 IP——限速互相拖累，Sybil 隔离更可能**把整个用户群锁在门外**（未配时启用会有启动告警）。
+- **状态留存**：`-state` 让准入/小网/声誉跨重启保留；`-reputation-decay` 让处罚随时间淡出。
+- **中继配额**：协调器兼跑 Circuit Relay v2（NAT 用户的兜底路径）；`-relay-*` 系列可限每电路时长/数据、预约与电路数，防中继被当免费带宽。
+
+多协调器 + 客户端故障切换、断线缓存、带外自愈等抗封锁能力见下方「进阶」与 [docs/anti-censorship.md](docs/anti-censorship.md)。
+
+---
+
+## 进阶
+
+<details>
+<summary><b>抗封锁（协调器被封也能续命）</b></summary>
+
+面向"协调器/中继/握手指纹被国家级防火墙盯上"的分层加固，多为默认可选：
+
+- **响应签名 + 多端点切换 + 本地缓存**：`-coordinator` 逗号分隔多地址自动故障切换；`-coordinator-cache`（需 `-coordinator-key`）把**已验签**的目录落盘，协调器全被封时用缓存续命；一切缓存/切换都仍受签名/过期/回滚校验。
+- **端口伪装**：`-listen` 加 `/ip4/0.0.0.0/tcp/443/ws` 让数据面骑 :443 像 web 流量（粗筛级，非探测抗性）。
+- **带外自愈**：运营者用钉扎密钥离线签一份端点清单（`coordinator -emit-bootstrap`）托管到 CDN/GitHub raw，节点 `-bootstrap-url` 在所有已知协调器被封时拉取、验签后切换重试。
+
+完整威胁建模与路线图见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
+</details>
+
+<details>
+<summary><b>去中心化发现（🧪 实验性）</b></summary>
+
+当协调器（含多端点/缓存/带外清单）**全部失效**时，节点还能经一张**私有认证 DHT** 发现并连上出口，不依赖任何单台服务器。信任锚是一把**离线根密钥**：它授权协调器的在线 issuer 给成员发证，出口在 DHT 上的记录都要回链到这把根才被采信；非成员记录、角色越权、被撤销者一律拒绝。
+
+> 仅经单元测试 + 单机烟测；"断协调器仍能经 DHT 出网"需两台异网机器端到端验证。默认关闭，用 `-dht` + `-root-key` 开启。命令示例与对手驱动评审见 **[docs/c1-decentralized-discovery.md](docs/c1-decentralized-discovery.md)**。
+</details>
+
+<details>
+<summary><b>全局 VPN 模式（TUN）</b></summary>
+
+`node-tun`（或 `go build -tags tun`）把**整机流量**透明导入网络，而不只是配了代理的应用。运行需管理员/root，Windows 另需 `wintun.dll`；`-tun-auto-route` 自动接管默认路由并排除自身流量。见 **[docs/tun-and-mobile.md](docs/tun-and-mobile.md)**（含移动端接入设计）。
+</details>
+
+<details>
+<summary><b>可观测性（日志 / 指标）</b></summary>
+
+- **结构化日志**：`-log-format json` 让 node/coordinator 每行输出一个 JSON 对象（`level`/`msg`/字段），便于日志采集器过滤/聚合；默认 `text` 人类可读。
+- **指标**：`node -metrics-addr 127.0.0.1:9090` 以 JSON 暴露 `/metrics`——出口的服务量与**按原因分类的拒绝量**，用来确认限流/隔离/信任策略是否在生效。
+
+```bash
+curl -s http://127.0.0.1:9090/metrics
+# { "exit_served": 128, "exit_denied:untrusted": 12, "exit_denied:requester-rate": 5 }
+```
+
+> ⚠️ `/metrics` **无鉴权**。请把 `-metrics-addr` 绑到 `127.0.0.1`（如上），或置于带鉴权的反代之后——不要绑到公网接口，否则会把出口的运营/滥用信号暴露给任何人。
+</details>
+
+<details>
+<summary><b>配置文件（替代一堆命令行 flag）</b></summary>
+
+flag 多时可写进一个 JSON 文件用 `-config` 加载——**键就是 flag 名**，命令行显式给出的覆盖文件（优先级：命令行 > 文件 > 默认）。未知键会报错（防拼写）。node 与 coordinator 都支持。
 
 ```jsonc
 // coord.json
-{
-  "addr": ":8080",
-  "invite": "welcome",
-  "uses": 100,
-  "rate-limit": 5,
-  "sybil-max-identities": 50
-}
+{ "addr": ":8080", "invite": "welcome", "rate-limit": 5, "sybil-max-identities": 50 }
 ```
 
 ```bash
-coordinator -config coord.json                 # 全部从文件读取
-coordinator -config coord.json -uses 7         # -uses 覆盖文件里的 100
+coordinator -config coord.json              # 全从文件读
+coordinator -config coord.json -uses 7      # -uses 覆盖文件里的值
 ```
 
-### 测试
+> ⚠️ 配置文件能设置**任意** flag，包括 `-root-key`/`-tls-key`/`-signing-key` 等密钥路径。请把它当作和命令行同等敏感——**妥善设置文件权限**，别提交进版本库。
+</details>
+
+---
+
+## 构建与开发
+
+从源码构建：
 
 ```bash
-go test ./...
+go build -o bin/ ./...                        # 产出 bin/coordinator、bin/node
+go build -tags tun -o bin/node-tun ./cmd/node # 可选：全局 TUN 模式
 ```
 
-完整测试指南（单元测试 + 多进程端到端出网 + 信任范围/出口保护/TUN 验证 + 一键脚本）见 **[docs/testing.md](docs/testing.md)**。
+一键交叉编译六平台发布包到 `dist/`：`scripts/build-release.sh v0.1.0`。维护者推 `git tag v0.1.0 && git push origin v0.1.0`，GitHub Actions 会自动构建并创建 Release。
 
-## 目录结构
+跑测试：`go test ./...`。完整测试指南（单元 + 多进程端到端出网 + 信任范围/出口保护/TUN 验证）见 **[docs/testing.md](docs/testing.md)**。
+
+<details>
+<summary><b>项目结构</b></summary>
 
 ```
 cmd/coordinator   协调服务器入口（兼跑 Circuit Relay）
-cmd/node          客户端核心入口（既是客户端也是出口）
+cmd/node          节点入口（既是客户端也是出口）
 internal/proxy    本地 SOCKS5 入口
 internal/tunnel   隧道两端（出/入），解耦具体传输
 internal/node     libp2p 接入：host、隧道、NAT 穿透、中继
@@ -219,23 +200,19 @@ internal/relay    Circuit Relay v2 中继服务
 internal/coordinator  节点目录、邀请准入、信任图、HTTP 控制面
 internal/trust    信任图（小网/背书/层级）、信任范围、两级声誉
 internal/routing  选路引擎（地区 + 信任/延迟/负载综合排序）
-internal/exit     ExitGuard 出口策略（信任范围/端口/域名/限额）
+internal/exit     ExitGuard 出口策略（信任范围/端口/域名/限额/熔断）
 internal/tun      TUN 全局模式（tun2socks，-tags tun 构建标签）
 pkg/protocol      隧道 wire 协议（目标地址编解码）
 ```
+</details>
 
 ## 开发状态
 
-- **M1** 骨架：本地 SOCKS5 + 两节点 libp2p 直连出网 ✅
-- **M2** 组网：邀请准入 + 节点目录/发现 + NAT 穿透 + Circuit Relay 兜底 ✅
-- **M3** 小网与信任：信任图/背书/信任层级/信任范围过滤/两级声誉 ✅（两级声誉的事件驱动与图形化首启动向导待 UI 阶段）
-- **M4** 选路：地区 + 延迟/负载/信任度综合排序自动选最优 ✅
-- **M5** 出口治理：ExitGuard（信任范围 + 端口/域名黑名单 + 并发限额） ✅（威胁情报接入与带宽熔断留待增强）
-- **M6** 扩展：桌面 TUN 全局模式（`-tags tun`，基于 tun2socks）可编译 + 移动端接入设计文档 ✅（TUN 需管理员/wintun.dll 在真机验证；移动端待平台 SDK 落地）。详见 [docs/tun-and-mobile.md](docs/tun-and-mobile.md)
+核心链路（M1–M6）已完成：本地 SOCKS5 + libp2p 直连出网、邀请准入 + 目录发现 + NAT 穿透 + 中继兜底、小网/信任/声誉、地区+延迟+负载综合选路、ExitGuard 出口治理、TUN 全局模式（代码完成待真机验证）。
 
-后续增强项（安全加固、UDP、持久化、UI、移动端落地等）见 **[docs/backlog.md](docs/backlog.md)**。抗国家级防火墙封锁的设计与分阶段路线图见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
+后续增强、抗封锁路线图与真机验证清单见 **[docs/backlog.md](docs/backlog.md)** 与 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
 
-> 注：真实跨 NAT 的打洞与 AutoRelay 自动预约需在两台异网机器上实测；本地回环已验证隧道与中继数据路径本身。
+> 真实跨 NAT 打洞与 AutoRelay 自动预约需在两台异网机器上实测；本地回环已验证隧道与中继数据路径本身。
 
 ## 许可
 
