@@ -80,6 +80,9 @@ func main() {
 	groupSecret := flag.String("group-secret", "", "secret required to join -group (the first joiner sets it)")
 	endorse := flag.String("endorse", "", "endorse fromGroup:toGroup (your group vouches for another)")
 	trustScope := flag.String("trust-scope", "", "trust range for exit selection: conservative|open (required with -to; no default by design)")
+	rankTrustW := flag.Float64("rank-trust-weight", 0, "weighted exit ranking: trust weight (set any -rank-*-weight to use weighted composite scoring instead of the default trust→latency→load order)")
+	rankLatencyW := flag.Float64("rank-latency-weight", 0, "weighted exit ranking: latency weight (lower latency preferred)")
+	rankLoadW := flag.Float64("rank-load-weight", 0, "weighted exit ranking: load weight (lower load preferred)")
 	exitScope := flag.String("exit-scope", "open", "ExitGuard: whose traffic to serve as exit: conservative|open")
 	blockPorts := flag.String("block-ports", "", "ExitGuard: extra destination ports to block, comma-separated (SMTP ports blocked by default)")
 	blockDomains := flag.String("block-domains", "", "ExitGuard: destination domains to block, comma-separated")
@@ -432,8 +435,9 @@ func main() {
 			}
 			serveSOCKS(ctx, *socksAddr, sw, openUDP)
 
+			rankWeights := routing.Weights{Trust: *rankTrustW, Latency: *rankLatencyW, Load: *rankLoadW}
 			connectIn := func(sc trust.Scope, region string) (string, error) {
-				ai, err := discoverExit(ctx, n, coord, region, selfID, sc, dd)
+				ai, err := discoverExit(ctx, n, coord, region, selfID, sc, dd, rankWeights)
 				if err != nil {
 					return "", err
 				}
@@ -667,7 +671,7 @@ func serveSOCKS(ctx context.Context, socksAddr string, dialer proxy.Dialer, open
 // discoverExit queries the directory and picks the best exit in the desired
 // region within the user's trust scope, ranked by trust, then measured latency,
 // then reported load.
-func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, region, selfID string, scope trust.Scope, dd *dhtDiscovery) (peer.AddrInfo, error) {
+func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, region, selfID string, scope trust.Scope, dd *dhtDiscovery, w routing.Weights) (peer.AddrInfo, error) {
 	nodes, tiers, err := c.DirectoryFor(selfID)
 	if err != nil {
 		// With Tier C enabled we can still try DHT-only discovery when the
@@ -713,9 +717,17 @@ func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, regi
 		cancel()
 	}
 
-	ranked := routing.RankExits(nodes, region, selfID, scope, tierOf, func(p string) routing.Metrics {
+	metricsFn := func(p string) routing.Metrics {
 		return routing.Metrics{LatencyMs: latency[p], Load: load[p]}
-	})
+	}
+	// Opt-in weighted composite ranking when any weight is set; otherwise the
+	// default lexicographic order (trust → latency → load).
+	var ranked []coordinator.NodeInfo
+	if w != (routing.Weights{}) {
+		ranked = routing.RankExitsWeighted(nodes, region, selfID, scope, tierOf, metricsFn, w)
+	} else {
+		ranked = routing.RankExits(nodes, region, selfID, scope, tierOf, metricsFn)
+	}
 	if len(ranked) == 0 {
 		return peer.AddrInfo{}, fmt.Errorf("no exit in region %q within %s trust scope", region, scope)
 	}
