@@ -3,13 +3,15 @@ package coordinator
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"net"
 
 	"github.com/whatgate/whatgate/internal/anomaly"
 	"github.com/whatgate/whatgate/internal/authn"
@@ -135,8 +137,9 @@ type Server struct {
 	groupSecrets map[string]string // groupID -> join secret
 	statePath    string            // if set, durable state is snapshotted here
 
-	limiter  *ratelimit.Limiter // if set, per-client-IP rate limit on mutating endpoints
-	sybilDet *anomaly.Detector  // if set, flags IPs minting too many distinct identities
+	limiter        *ratelimit.Limiter // if set, per-client-IP rate limit on mutating endpoints
+	sybilDet       *anomaly.Detector  // if set, flags IPs minting too many distinct identities
+	trustedProxies []*net.IPNet       // reverse proxies whose X-Forwarded-For is trusted
 
 	sigMu    sync.Mutex
 	seenSigs map[string]time.Time // signature -> expiry, for replay rejection
@@ -374,8 +377,9 @@ func (s *Server) Graph() *trust.Graph { return s.graph }
 // (join/register/group/report): each client IP may burst up to burst requests
 // and sustain ratePerSec. This slows mass join/register from a leaked invite
 // (Sybil abuse) on top of the invite's total-uses cap. NOTE: keyed by the
-// connection's remote IP — behind a shared proxy/CDN the operator must ensure the
-// real client IP reaches the coordinator, or all clients share one bucket.
+// connection's remote IP — behind a shared proxy/CDN the operator must set
+// SetTrustedProxies so the real client IP (from X-Forwarded-For) is used, or all
+// clients share one bucket.
 func (s *Server) SetRateLimit(ratePerSec, burst float64) {
 	s.limiter = ratelimit.New(ratePerSec, burst)
 }
@@ -397,7 +401,7 @@ func (s *Server) rateLimited(next http.HandlerFunc) http.HandlerFunc {
 		return next
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.limiter.Allow(clientIP(r)) {
+		if !s.limiter.Allow(s.clientIP(r)) {
 			http.Error(w, "rate limited", http.StatusTooManyRequests)
 			return
 		}
@@ -405,13 +409,79 @@ func (s *Server) rateLimited(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// clientIP returns the host portion of the request's remote address (the limiter
-// key). Falls back to the raw RemoteAddr if it has no port.
-func clientIP(r *http.Request) string {
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+// SetTrustedProxies configures the reverse proxies / CDN edges in front of the
+// coordinator, as IPs or CIDRs. When set, clientIP trusts X-Forwarded-For only
+// for requests arriving directly from one of these, so per-IP controls
+// (rate limit, Sybil isolation) key on the real client instead of collapsing all
+// users onto the proxy's single IP. Without it, X-Forwarded-For is ignored
+// (spoofable). Returns an error on an unparseable entry.
+func (s *Server) SetTrustedProxies(entries []string) error {
+	nets := make([]*net.IPNet, 0, len(entries))
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(e); err == nil {
+			nets = append(nets, n)
+			continue
+		}
+		ip := net.ParseIP(e)
+		if ip == nil {
+			return fmt.Errorf("coordinator: invalid trusted-proxy %q", e)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+	s.trustedProxies = nets
+	return nil
+}
+
+// isTrustedProxy reports whether ip (a string literal) is a configured proxy.
+func (s *Server) isTrustedProxy(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, n := range s.trustedProxies {
+		if n.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP returns the IP to key per-IP controls on. It is the socket peer IP,
+// except when that peer is a configured trusted proxy: then it is the rightmost
+// X-Forwarded-For entry that is not itself a trusted proxy (the real client as
+// seen by the trusted edge). X-Forwarded-For from a non-trusted peer is ignored,
+// since anyone can forge it.
+func (s *Server) clientIP(r *http.Request) string {
+	peer := hostOf(r.RemoteAddr)
+	if len(s.trustedProxies) == 0 || !s.isTrustedProxy(peer) {
+		return peer
+	}
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		ip := strings.TrimSpace(parts[i])
+		if ip == "" || s.isTrustedProxy(ip) {
+			continue
+		}
+		return ip
+	}
+	return peer // XFF empty or all trusted: fall back to the proxy IP
+}
+
+// hostOf returns the host portion of a "host:port" address, or the input as-is
+// if it has no port.
+func hostOf(remoteAddr string) string {
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
 		return host
 	}
-	return r.RemoteAddr
+	return remoteAddr
 }
 
 // Handler returns the HTTP handler exposing the coordinator API. The mutating
@@ -621,7 +691,7 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	// Sybil isolation: reject once this IP has minted too many distinct identities
 	// in the window (auth is verified first, so the PeerID is genuine).
-	if s.sybilDet != nil && s.sybilDet.Observe(clientIP(r), req.PeerID) {
+	if s.sybilDet != nil && s.sybilDet.Observe(s.clientIP(r), req.PeerID) {
 		http.Error(w, "too many identities from this source", http.StatusTooManyRequests)
 		return
 	}

@@ -60,6 +60,7 @@ func main() {
 	rateBurst := flag.Float64("rate-burst", 20, "per-client-IP burst allowance for -rate-limit")
 	sybilWindow := flag.Duration("sybil-window", time.Hour, "anomaly detection: sliding window over which distinct join identities per IP are counted")
 	sybilMaxIdentities := flag.Int("sybil-max-identities", 0, "anomaly detection: reject join once an IP mints this many distinct PeerIDs within -sybil-window (0 = disabled). Catches patient Sybil growth that stays under -rate-limit. Keyed by IP; set generously for CGNAT/proxy sharing")
+	trustedProxies := flag.String("trusted-proxies", "", "comma-separated IPs/CIDRs of reverse proxies/CDN edges in front of the coordinator; only then is X-Forwarded-For trusted, so per-IP rate-limit/Sybil controls key on the real client instead of collapsing all users onto the proxy IP. REQUIRED when fronting the coordinator with a CDN/proxy (see docs/anti-censorship.md), else those controls mis-key")
 	emitBootstrap := flag.String("emit-bootstrap", "", "sign a bootstrap list of the given comma-separated coordinator URLs (needs -signing-key), print it to stdout, and exit; host the output on an out-of-band channel (CDN/GitHub raw) as a node -bootstrap-url")
 	bootstrapSerial := flag.Uint64("bootstrap-serial", 0, "monotonic serial for -emit-bootstrap; must strictly increase across publications (older ones are rejected as rollbacks)")
 	bootstrapTTL := flag.Duration("bootstrap-ttl", 30*24*time.Hour, "how long a -emit-bootstrap list stays acceptable to nodes")
@@ -268,10 +269,21 @@ func main() {
 		srv.SetRateLimit(*rateLimit, *rateBurst)
 		slog.Info("rate limit enabled", "req_per_sec", *rateLimit, "burst", *rateBurst, "endpoints", "join/register/group/report")
 	}
+	// Trusted proxies must be set before the per-IP controls key on requests, so
+	// X-Forwarded-For is honored only from a known edge.
+	if *trustedProxies != "" {
+		if err := srv.SetTrustedProxies(splitEndpoints(*trustedProxies)); err != nil {
+			log.Fatal(err)
+		}
+		slog.Info("trusted proxies configured (X-Forwarded-For honored from these)", "proxies", *trustedProxies)
+	}
 	// Sybil-pattern isolation: flag IPs minting too many distinct identities.
 	if *sybilMaxIdentities > 0 {
 		srv.SetAnomalyDetection(*sybilWindow, *sybilMaxIdentities)
 		slog.Info("anomaly detection enabled", "max_identities_per_ip", *sybilMaxIdentities, "window", *sybilWindow)
+		if *trustedProxies == "" {
+			slog.Warn("Sybil isolation is keyed on the socket IP and no -trusted-proxies set; behind a CDN/reverse proxy this can lock out all users sharing the proxy IP — set -trusted-proxies or disable it there")
+		}
 	}
 
 	// Periodically decay reputation so punishments fade and scores don't linger.
@@ -286,7 +298,10 @@ func main() {
 		slog.Info("reputation decay enabled", "amount", *repDecay, "interval", *repDecayInterval)
 	}
 
-	slog.Info("coordinator listening", "addr", *addr, "invite", *invite, "issuer", *issuer, "uses", *uses, "directory_ttl", ttl.String())
+	// Note: the seeded invite code is a bearer admission credential and is
+	// deliberately NOT logged (structured logs may ship to a collector). Operators
+	// see it via the -invite value they set.
+	slog.Info("coordinator listening", "addr", *addr, "issuer", *issuer, "uses", *uses, "directory_ttl", ttl.String())
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
