@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"net"
 
+	"github.com/whatgate/whatgate/internal/anomaly"
 	"github.com/whatgate/whatgate/internal/authn"
 	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/membership"
@@ -134,7 +135,8 @@ type Server struct {
 	groupSecrets map[string]string // groupID -> join secret
 	statePath    string            // if set, durable state is snapshotted here
 
-	limiter *ratelimit.Limiter // if set, per-client-IP rate limit on mutating endpoints
+	limiter  *ratelimit.Limiter // if set, per-client-IP rate limit on mutating endpoints
+	sybilDet *anomaly.Detector  // if set, flags IPs minting too many distinct identities
 
 	sigMu    sync.Mutex
 	seenSigs map[string]time.Time // signature -> expiry, for replay rejection
@@ -378,6 +380,16 @@ func (s *Server) SetRateLimit(ratePerSec, burst float64) {
 	s.limiter = ratelimit.New(ratePerSec, burst)
 }
 
+// SetAnomalyDetection enables Sybil-pattern isolation on join: an IP that redeems
+// invites for maxIdentities or more *distinct* PeerIDs within window is flagged
+// and its further join attempts are rejected. This catches a patient attacker who
+// stays under the rate limit but still assembles a fleet of identities from one
+// source. Keyed by IP, so set maxIdentities generously to tolerate legitimate
+// CGNAT/proxy sharing (see anomaly.Detector's caveat).
+func (s *Server) SetAnomalyDetection(window time.Duration, maxIdentities int) {
+	s.sybilDet = anomaly.New(window, maxIdentities)
+}
+
 // rateLimited wraps a handler with the per-IP limiter (no-op if unset), rejecting
 // over-limit requests with 429 before any decoding or auth.
 func (s *Server) rateLimited(next http.HandlerFunc) http.HandlerFunc {
@@ -605,6 +617,12 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.checkAuth(req.Auth, "join", req.PeerID); err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	// Sybil isolation: reject once this IP has minted too many distinct identities
+	// in the window (auth is verified first, so the PeerID is genuine).
+	if s.sybilDet != nil && s.sybilDet.Observe(clientIP(r), req.PeerID) {
+		http.Error(w, "too many identities from this source", http.StatusTooManyRequests)
 		return
 	}
 

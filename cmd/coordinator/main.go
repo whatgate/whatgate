@@ -47,6 +47,8 @@ func main() {
 	repDecayInterval := flag.Duration("reputation-decay-interval", time.Hour, "how often to apply reputation decay")
 	rateLimit := flag.Float64("rate-limit", 0, "per-client-IP requests/sec on mutating endpoints (join/register/group/report); 0 = disabled. Slows mass join/register from a leaked invite")
 	rateBurst := flag.Float64("rate-burst", 20, "per-client-IP burst allowance for -rate-limit")
+	sybilWindow := flag.Duration("sybil-window", time.Hour, "anomaly detection: sliding window over which distinct join identities per IP are counted")
+	sybilMaxIdentities := flag.Int("sybil-max-identities", 0, "anomaly detection: reject join once an IP mints this many distinct PeerIDs within -sybil-window (0 = disabled). Catches patient Sybil growth that stays under -rate-limit. Keyed by IP; set generously for CGNAT/proxy sharing")
 	emitBootstrap := flag.String("emit-bootstrap", "", "sign a bootstrap list of the given comma-separated coordinator URLs (needs -signing-key), print it to stdout, and exit; host the output on an out-of-band channel (CDN/GitHub raw) as a node -bootstrap-url")
 	bootstrapSerial := flag.Uint64("bootstrap-serial", 0, "monotonic serial for -emit-bootstrap; must strictly increase across publications (older ones are rejected as rollbacks)")
 	bootstrapTTL := flag.Duration("bootstrap-ttl", 30*24*time.Hour, "how long a -emit-bootstrap list stays acceptable to nodes")
@@ -238,6 +240,11 @@ func main() {
 	if *rateLimit > 0 {
 		srv.SetRateLimit(*rateLimit, *rateBurst)
 		fmt.Printf("rate limit: %.3g req/s per IP (burst %.3g) on join/register/group/report\n", *rateLimit, *rateBurst)
+	}
+	// Sybil-pattern isolation: flag IPs minting too many distinct identities.
+	if *sybilMaxIdentities > 0 {
+		srv.SetAnomalyDetection(*sybilWindow, *sybilMaxIdentities)
+		fmt.Printf("anomaly detection: isolate IP after %d distinct join identities within %s\n", *sybilMaxIdentities, *sybilWindow)
 	}
 
 	// Periodically decay reputation so punishments fade and scores don't linger.

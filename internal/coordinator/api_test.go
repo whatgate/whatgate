@@ -37,6 +37,28 @@ func TestJoinRegisterDirectoryFlow(t *testing.T) {
 	}
 }
 
+func TestJoinFlagsSybilIdentityBurstFromOneIP(t *testing.T) {
+	dir := NewDirectory(time.Minute, nil)
+	inv := NewInviteStore(nil)
+	inv.Create("welcome", "founder", 100) // ample uses; the IP cap must bite first
+
+	srv := NewServer(dir, inv)
+	srv.SetAnomalyDetection(time.Hour, 2) // >= 2 distinct identities per IP → isolate
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// First distinct identity from this IP joins fine.
+	c1, id1 := newSignedClient(t, ts.URL)
+	if _, err := c1.Join("welcome", id1); err != nil {
+		t.Fatalf("first join should succeed: %v", err)
+	}
+	// A second distinct identity from the same IP trips the Sybil detector.
+	c2, id2 := newSignedClient(t, ts.URL)
+	if _, err := c2.Join("welcome", id2); err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("second distinct identity should be flagged (429), got %v", err)
+	}
+}
+
 func TestRegisterWithoutAdmissionForbidden(t *testing.T) {
 	dir := NewDirectory(time.Minute, nil)
 	inv := NewInviteStore(nil)
