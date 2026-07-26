@@ -160,6 +160,7 @@ node -coordinator http://host:8080 -invite welcome -exit -region JP \
 - `-min-reputation`：拒绝声誉低于阈值的请求方（滥用者访问被封目标会被扣分，随后被各出口拒服务；默认禁用）
 - `-audit-log <file>`：把每次服务/拒绝（时间/请求方/目标/结果）以 JSON Lines 追加落盘，供事后追责
 - `-threat-feed <url|file>`：拉取已知恶意域名清单并入黑名单，定期刷新（`-threat-feed-interval`）
+- `-dns-server <host[:port]>`：出口用指定的可信解析器解析主机名目标（隔离本地 DNS 投毒/审查），解析仍在出口侧；DNS 解析模型与防泄漏见 **[docs/dns.md](docs/dns.md)**
 
 ### 可观测性（指标）
 

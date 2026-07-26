@@ -41,7 +41,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 |---|---|---|
 | P1 | ~~**UDP 支持**~~ ✅ **已完成** | SOCKS5 UDP ASSOCIATE + libp2p UDP 数据报隧道（`pkg/protocol` 帧、`node` UDPSession/出口转发、`proxy` UDP 中继），DNS-over-UDP 真实出网验证。UDP 出口已接 ExitGuard（与 TCP 共用授权：信任范围/声誉/端口/域名/并发）。 |
 | P2 | ~~**选路精细化**~~ ✅ **已完成** | **可配加权综合评分 ✅**：`routing.RankExitsWeighted`（`Weights{Trust,Latency,Load}`，综合分排序 + 字典序 tie-break，仍按 scope 过滤）；node `-rank-{trust,latency,load}-weight`（任一非零启用，默认字典序不变）。**延迟 EWMA 平滑 ✅**：`routing.LatencyTracker` 跨重发现轮对每出口 RTT 做指数加权移动平均，单个慢探针被阻尼不再抖动选路；node `-latency-ewma-alpha`（默认 0.3，置 1 关闭平滑=旧行为）；不可达轮用哨兵排末但不污染平滑历史，恢复即回。 |
-| P2 | **DNS 策略** | 明确并可配 DNS 解析位置（出口侧解析利于解锁）；文档化防 DNS 泄漏。 |
+| P2 | ~~**DNS 策略**~~ ✅ **已完成** | 明确解析模型（隧道端到端传 `host:port`，主机名在出口侧解析——SOCKS5 `atypDomain` 原样透传不本地解析）；出口可配可信解析器 `-dns-server`（`internal/dnsx`，隔离本地 DNS 投毒/审查，`:53` 默认、IPv6 自动加括号），解析仍在出口侧；文档 [dns.md](dns.md) 讲清客户端如何避免泄漏（`--socks5-hostname`/浏览器远端 DNS）与诚实边界（UDP 主机名/TUN 分流）。 |
 
 ## E. TUN 全局模式（桌面）
 

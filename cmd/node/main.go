@@ -46,6 +46,7 @@ import (
 	"github.com/whatgate/whatgate/internal/config"
 	"github.com/whatgate/whatgate/internal/coordinator"
 	"github.com/whatgate/whatgate/internal/discovery"
+	"github.com/whatgate/whatgate/internal/dnsx"
 	"github.com/whatgate/whatgate/internal/exit"
 	"github.com/whatgate/whatgate/internal/logging"
 	"github.com/whatgate/whatgate/internal/membership"
@@ -101,6 +102,7 @@ func main() {
 	reqBandwidthBurst := flag.Float64("requester-bandwidth-burst", 0, "ExitGuard: momentary byte burst allowance for -requester-bandwidth (0 = defaults to -requester-bandwidth)")
 	minReputation := flag.Int("min-reputation", -1_000_000_000, "ExitGuard: refuse requesters whose reputation is below this (default effectively disabled)")
 	allowPrivateTargets := flag.Bool("allow-private-targets", false, "ExitGuard: allow serving requests to private/loopback/link-local addresses (default false blocks SSRF to your LAN, localhost, and cloud metadata)")
+	dnsServer := flag.String("dns-server", "", "exit: resolve hostname targets via this DNS server (host or host:port, :53 assumed) instead of the exit host's system resolver — use a trusted/uncensored resolver so a poisoned local resolver can't misdirect exits (empty = system resolver)")
 	auditLog := flag.String("audit-log", "", "ExitGuard: append a JSON-lines record of served/denied requests to this file (accountability)")
 	metricsAddr := flag.String("metrics-addr", "", "if set, serve operational counters as JSON at http://<addr>/metrics (e.g. 127.0.0.1:9090): exit served/denied-by-reason, etc.")
 	threatFeed := flag.String("threat-feed", "", "ExitGuard: URL or file of known-malicious domains to block (merged with -block-domains)")
@@ -261,11 +263,20 @@ func main() {
 		isExitOn func() bool
 	)
 	{
+		// Optional pinned resolver so the exit doesn't depend on its host's
+		// (possibly poisoned/censored) system DNS.
+		dnsResolver, err := dnsx.Resolver(*dnsServer)
+		if err != nil {
+			log.Fatalf("dns-server: %v", err)
+		}
+		if *dnsServer != "" {
+			slog.Info("exit DNS resolver pinned", "server", *dnsServer)
+		}
 		// SSRF guard: block dialing private/loopback/metadata targets at connect
 		// time (after DNS resolution, so hostname→internal rebinding is caught too),
 		// unless the operator opts in with -allow-private-targets.
 		dial := func(ctx context.Context, addr string) (net.Conn, error) {
-			d := net.Dialer{Control: exit.DialControl(*allowPrivateTargets)}
+			d := net.Dialer{Control: exit.DialControl(*allowPrivateTargets), Resolver: dnsResolver}
 			return d.DialContext(ctx, "tcp", addr)
 		}
 		policy, err := buildExitPolicy(*exitScope, *blockPorts, *blockDomains, *maxConns, *maxConnsPerReq, *minReputation, *allowPrivateTargets, *reqRate, *reqBurst, *reqBandwidth, *reqBandwidthBurst)
