@@ -32,6 +32,11 @@ const (
 	TypeRelay      = "relay"
 	TypeBootstrap  = "bootstrap"
 	TypeRevocation = "revocation"
+	// C1 membership credential chain (see docs/c1-decentralized-discovery.md §15):
+	// an offline root signs an issuer cert authorizing an online issuer key to
+	// grant member certs of certain roles; that issuer signs member certs.
+	TypeIssuerCert = "issuer-cert"
+	TypeMemberCert = "member-cert"
 )
 
 // Meta is the signed metadata wrapping a payload. All fields are covered by the
