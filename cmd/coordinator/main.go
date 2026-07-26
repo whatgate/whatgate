@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/whatgate/whatgate/internal/config"
 	"github.com/whatgate/whatgate/internal/coordinator"
 	"github.com/whatgate/whatgate/internal/discovery"
+	"github.com/whatgate/whatgate/internal/logging"
 	"github.com/whatgate/whatgate/internal/membership"
 	"github.com/whatgate/whatgate/internal/persist"
 	"github.com/whatgate/whatgate/internal/relay"
@@ -35,6 +37,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	configPath := flag.String("config", "", "JSON config file whose keys are flag names; command-line flags override it")
+	logFormat := flag.String("log-format", "text", "log output format: text (human-readable) or json (one object per line, for log collectors)")
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	invite := flag.String("invite", "welcome", "invite code to seed for admission")
 	issuer := flag.String("issuer", "founder", "issuer attributed to the seeded invite")
@@ -92,6 +95,10 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+
+	// Structured logging for operational/security events. Producer modes (-emit-*)
+	// still write their signed artifacts to stdout below; this only affects logs.
+	slog.SetDefault(logging.New(os.Stderr, *logFormat))
 
 	// Producer mode: sign a bootstrap list and exit. This is an offline operator
 	// tool, not part of serving — a node self-heals by fetching this output from a
@@ -186,7 +193,7 @@ func main() {
 		}
 		srv.LoadSnapshot(snap)
 		srv.SetStatePath(*statePath)
-		fmt.Printf("state file: %s\n", *statePath)
+		slog.Info("state file loaded", "path", *statePath)
 	}
 	if !invites.Exists(*invite) {
 		invites.Create(*invite, *issuer, *uses)
@@ -201,10 +208,9 @@ func main() {
 			log.Fatalf("signing key: %v", err)
 		}
 		srv.SetSigningKey(priv)
-		fmt.Printf("directory signing: enabled\n")
-		fmt.Printf("coordinator public key (share as node -coordinator-key): %s\n", discovery.EncodePublicKey(priv.GetPublic()))
+		slog.Info("directory signing enabled", "coordinator_pubkey", discovery.EncodePublicKey(priv.GetPublic()))
 	} else {
-		fmt.Println("directory signing: DISABLED — nodes cannot authenticate the directory; set -signing-key in production")
+		slog.Warn("directory signing DISABLED — nodes cannot authenticate the directory; set -signing-key in production")
 	}
 
 	// C1 membership issuance: as an online, root-authorized issuer, mint a
@@ -215,10 +221,10 @@ func main() {
 		if err != nil {
 			log.Fatalf("issuer key: %v", err)
 		}
-		fmt.Printf("issuer public key (authorize offline: coordinator -emit-issuer-cert -root-key <root> -issuer-pubkey %s): %s\n",
-			discovery.EncodePublicKey(issuerPriv.GetPublic()), discovery.EncodePublicKey(issuerPriv.GetPublic()))
+		slog.Info("issuer key loaded (authorize offline with -emit-issuer-cert -root-key <root> -issuer-pubkey <key>)",
+			"issuer_pubkey", discovery.EncodePublicKey(issuerPriv.GetPublic()))
 		if *issuerCertPath == "" {
-			fmt.Println("WARNING: -issuer-key set without -issuer-cert; member-cert issuance DISABLED until a root-signed issuer cert is provided")
+			slog.Warn("-issuer-key set without -issuer-cert; member-cert issuance DISABLED until a root-signed issuer cert is provided")
 		} else {
 			certBytes, err := os.ReadFile(*issuerCertPath)
 			if err != nil {
@@ -229,7 +235,7 @@ func main() {
 				log.Fatalf("issuer cert: %v", err)
 			}
 			srv.SetIssuer(issuerPriv, certBytes, id)
-			fmt.Printf("member cert issuance: enabled (issuer=%s)\n", id)
+			slog.Info("member cert issuance enabled", "issuer", id)
 		}
 	}
 
@@ -252,25 +258,20 @@ func main() {
 			addrs = append(addrs, a.String())
 		}
 		srv.SetRelayInfo(rl.ID().String(), addrs)
-		if *relayCircuitDuration > 0 || *relayCircuitData > 0 || *relayMaxReservations > 0 ||
-			*relayMaxCircuitsPerPeer > 0 || *relayMaxReservationsPerIP > 0 || *relayReservationTTL > 0 {
-			fmt.Println("relay resource limits: tightened from libp2p defaults")
-		}
-		fmt.Printf("relay peer id: %s\n", rl.ID())
-		for _, a := range addrs {
-			fmt.Printf("  relay addr: %s/p2p/%s\n", a, rl.ID())
-		}
+		limitsTightened := *relayCircuitDuration > 0 || *relayCircuitData > 0 || *relayMaxReservations > 0 ||
+			*relayMaxCircuitsPerPeer > 0 || *relayMaxReservationsPerIP > 0 || *relayReservationTTL > 0
+		slog.Info("relay started", "peer_id", rl.ID().String(), "addrs", addrs, "limits_tightened", limitsTightened)
 	}
 
 	// Per-client-IP rate limiting on mutating endpoints (anti-Sybil / anti-abuse).
 	if *rateLimit > 0 {
 		srv.SetRateLimit(*rateLimit, *rateBurst)
-		fmt.Printf("rate limit: %.3g req/s per IP (burst %.3g) on join/register/group/report\n", *rateLimit, *rateBurst)
+		slog.Info("rate limit enabled", "req_per_sec", *rateLimit, "burst", *rateBurst, "endpoints", "join/register/group/report")
 	}
 	// Sybil-pattern isolation: flag IPs minting too many distinct identities.
 	if *sybilMaxIdentities > 0 {
 		srv.SetAnomalyDetection(*sybilWindow, *sybilMaxIdentities)
-		fmt.Printf("anomaly detection: isolate IP after %d distinct join identities within %s\n", *sybilMaxIdentities, *sybilWindow)
+		slog.Info("anomaly detection enabled", "max_identities_per_ip", *sybilMaxIdentities, "window", *sybilWindow)
 	}
 
 	// Periodically decay reputation so punishments fade and scores don't linger.
@@ -282,12 +283,10 @@ func main() {
 				srv.DecayReputation(*repDecay)
 			}
 		}()
-		fmt.Printf("reputation decay: %d per %s\n", *repDecay, *repDecayInterval)
+		slog.Info("reputation decay enabled", "amount", *repDecay, "interval", *repDecayInterval)
 	}
 
-	fmt.Printf("WhatGate coordinator listening on %s\n", *addr)
-	fmt.Printf("seeded invite: %q (issuer=%s, uses=%d)\n", *invite, *issuer, *uses)
-	fmt.Println("directory TTL:", *ttl)
+	slog.Info("coordinator listening", "addr", *addr, "invite", *invite, "issuer", *issuer, "uses", *uses, "directory_ttl", ttl.String())
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
@@ -302,10 +301,10 @@ func main() {
 		log.Fatal("coordinator: -tls-cert and -tls-key must be set together")
 	}
 	if *tlsCert != "" {
-		fmt.Println("TLS: enabled")
+		slog.Info("TLS enabled")
 		log.Fatal(httpSrv.ListenAndServeTLS(*tlsCert, *tlsKey))
 	}
-	fmt.Println("TLS: DISABLED — control plane is plaintext; use -tls-cert/-tls-key or a TLS-terminating proxy in production")
+	slog.Warn("TLS DISABLED — control plane is plaintext; use -tls-cert/-tls-key or a TLS-terminating proxy in production")
 	log.Fatal(httpSrv.ListenAndServe())
 }
 

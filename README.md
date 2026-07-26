@@ -163,7 +163,9 @@ node -coordinator http://host:8080 -invite welcome -exit -region JP \
 
 ### 可观测性（指标）
 
-加 `-metrics-addr` 让 node 以 JSON 暴露运维计数器（`/metrics`）。出口会记录服务量与**按原因分类的拒绝量**，便于确认限流/隔离/信任策略是否在按预期生效：
+**结构化日志**：node/coordinator 都支持 `-log-format json`——每行一个 JSON 对象（`level`/`msg`/结构化字段），便于用日志采集器过滤/聚合运营与安全事件；默认 `text` 为人类可读。
+
+**指标**：加 `-metrics-addr` 让 node 以 JSON 暴露运维计数器（`/metrics`）。出口会记录服务量与**按原因分类的拒绝量**，便于确认限流/隔离/信任策略是否在按预期生效：
 
 ```bash
 node ... -exit -metrics-addr 127.0.0.1:9090

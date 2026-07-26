@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -46,6 +47,7 @@ import (
 	"github.com/whatgate/whatgate/internal/coordinator"
 	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/exit"
+	"github.com/whatgate/whatgate/internal/logging"
 	"github.com/whatgate/whatgate/internal/membership"
 	"github.com/whatgate/whatgate/internal/metrics"
 	"github.com/whatgate/whatgate/internal/node"
@@ -64,6 +66,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	configPath := flag.String("config", "", "JSON config file whose keys are flag names; command-line flags override it")
+	logFormat := flag.String("log-format", "text", "log output format: text (human-readable) or json (one object per line, for log collectors)")
 	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr(s), comma-separated; add e.g. /ip4/0.0.0.0/tcp/443/ws to also ride :443 like web traffic (A4)")
 	asExit := flag.Bool("exit", false, "act as an exit node for other peers (serves their traffic)")
 	connect := flag.String("connect", "", "exit peer multiaddr to tunnel through (manual client mode)")
@@ -122,6 +125,10 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+
+	// Structured logging for operational diagnostics (the human-readable startup
+	// banner below stays on stdout regardless).
+	slog.SetDefault(logging.New(os.Stderr, *logFormat))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -211,7 +218,7 @@ func main() {
 		ms := &http.Server{Addr: *metricsAddr, Handler: mux}
 		go func() {
 			if err := ms.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Printf("metrics server: %v", err)
+				slog.Error("metrics server", "err", err)
 			}
 		}()
 		go func() { <-ctx.Done(); _ = ms.Close() }()
@@ -273,7 +280,7 @@ func main() {
 			applyFeed := func() {
 				feed, err := threatfeed.Fetch(*threatFeed)
 				if err != nil {
-					log.Printf("threat feed fetch: %v", err)
+					slog.Warn("threat feed fetch", "err", err)
 					return
 				}
 				merged := guard.StaticBlockedDomains()
@@ -409,7 +416,7 @@ func main() {
 
 		if *group != "" {
 			if err := coord.JoinGroup(*group, selfID, *groupSecret); err != nil {
-				log.Printf("join group %s: %v", *group, err)
+				slog.Warn("join group", "group", *group, "err", err)
 			} else {
 				fmt.Printf("joined small-network group %s\n", *group)
 			}
@@ -417,12 +424,12 @@ func main() {
 		if *endorse != "" {
 			if from, to, ok := strings.Cut(*endorse, ":"); ok {
 				if err := coord.EndorseGroup(from, to); err != nil {
-					log.Printf("endorse %s->%s: %v", from, to, err)
+					slog.Warn("endorse", "from", from, "to", to, "err", err)
 				} else {
 					fmt.Printf("endorsed group %s -> %s\n", from, to)
 				}
 			} else {
-				log.Printf("bad -endorse %q; want fromGroup:toGroup", *endorse)
+				slog.Warn("bad -endorse; want fromGroup:toGroup", "value", *endorse)
 			}
 		}
 
@@ -587,7 +594,7 @@ func main() {
 			}
 			defer func() {
 				if err := tun.ApplyDown(routeCfg); err != nil {
-					log.Printf("tun auto-route teardown: %v", err)
+					slog.Warn("tun auto-route teardown", "err", err)
 				}
 			}()
 			fmt.Printf("TUN auto-route: default route → %s, gateway %s, %d self-exclusion(s)\n", *tunAddr, gw, len(excludes))
@@ -697,7 +704,7 @@ func serveSOCKS(ctx context.Context, socksAddr string, dialer proxy.Dialer, open
 	}()
 	go func() {
 		if err := srv.Serve(l); err != nil && ctx.Err() == nil {
-			log.Printf("socks server stopped: %v", err)
+			slog.Warn("socks server stopped", "err", err)
 		}
 	}()
 	fmt.Printf("SOCKS5 proxy on %s\n", socksAddr)
@@ -714,10 +721,10 @@ func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, regi
 		if dd == nil {
 			return peer.AddrInfo{}, err
 		}
-		log.Printf("coordinator unreachable (%v); attempting DHT-only discovery", err)
+		slog.Warn("coordinator unreachable; attempting DHT-only discovery", "err", err)
 		nodes, tiers = nil, map[string]trust.Tier{}
 	} else if c.LastDirectoryStale() {
-		log.Println("WARNING: coordinator unreachable; using cached (possibly stale) directory")
+		slog.Warn("coordinator unreachable; using cached (possibly stale) directory")
 	}
 	tierOf := func(p string) trust.Tier { return tiers[p] }
 
@@ -811,7 +818,7 @@ func registerOnce(c *coordinator.Client, selfID string, addrs []string, region s
 		Load:     load,
 	})
 	if err != nil {
-		log.Printf("register with coordinator: %v", err)
+		slog.Warn("register with coordinator", "err", err)
 	}
 }
 
