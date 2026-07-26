@@ -15,7 +15,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 | P1 | ~~**小网操作鉴权**~~ ✅ **已完成** | 入组需签名(证明本人 peerID，防冒充)+ 小网口令(防陌生人凭名字混入)；背书需签名且发起者为 fromGroup 成员。负面用例：错口令 403 / 冒充 401 / 非成员背书 403。 |
 | P1 | ~~**声誉事件驱动 + 衰减 + 持久化**~~ ✅ **已完成** | 事件驱动 ✅（`trust.Outcome`，出口 `/report`）；持久化 ✅（Phase 1.5）；衰减 ✅（`Reputation.Decay`，coordinator `-reputation-decay`，分数周期性向 0 回归）。 |
 | P1 | ~~**ExitGuard 声誉门槛**~~ ✅ **已完成** | `Policy.MinRequesterReputation`，出口授权时查请求方声誉、低于阈值即拒（`-min-reputation`，默认禁用）。与 2.6 成闭环：滥用被扣分后被各出口拒服务（e2e `scripts/e2e-reputation.ps1` 验证）。 |
-| P2 | **抗女巫 / 协调器限流** | 邀请制之外，加注册/入群频率限制、异常行为检测，防批量小号。 |
+| P2 | **抗女巫 / 协调器限流** `partial` | **频率限制 ✅**：按客户端 IP 令牌桶（`internal/ratelimit`）限流变更类端点（join/register/group/report），coordinator `-rate-limit`/`-rate-burst`，超限 429，与邀请 uses 上限叠加提高 Sybil 成本（诚实边界：共享代理/CDN 后需真实 IP 抵达）。**剩：异常行为检测**（模式识别/自动隔离）。 |
 
 ## B. 出口治理增强（ExitGuard）
 
