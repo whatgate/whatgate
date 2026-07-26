@@ -28,7 +28,7 @@ type UDPAuthorizer func(target string) (release func(), err error)
 // EnableUDPExit relays UDP datagrams for others without policy (allow all).
 func (n *Node) EnableUDPExit() {
 	n.h.SetStreamHandler(UDPTunnelProtocol, func(s network.Stream) {
-		relayUDP(streamConn{s}, nil, false)
+		relayUDP(streamConn{s}, nil, false, nil)
 	})
 }
 
@@ -43,7 +43,7 @@ func (n *Node) EnableGuardedUDPExit(cfg GuardedExit) {
 		requesterID := s.Conn().RemotePeer().String()
 		relayUDP(streamConn{s}, func(target string) (func(), error) {
 			return authorize(requesterID, target)
-		}, blockPrivate)
+		}, blockPrivate, cfg.meterFor(requesterID))
 	})
 }
 
@@ -60,8 +60,9 @@ type udpTarget struct {
 // relayUDP serves one UDP tunnel stream: it keeps a UDP socket per target
 // (NAT-like), sending each framed datagram out and framing replies back. If
 // authorize is non-nil, each new target must pass it (denied targets are
-// dropped).
-func relayUDP(stream net.Conn, authorize UDPAuthorizer, blockPrivate bool) {
+// dropped). If meter is non-nil, every relayed byte (both directions) is charged
+// to it, and a tripped budget tears the whole tunnel down (bandwidth breaker).
+func relayUDP(stream net.Conn, authorize UDPAuthorizer, blockPrivate bool, meter func(n int) bool) {
 	defer stream.Close()
 
 	var wmu sync.Mutex
@@ -139,12 +140,23 @@ func relayUDP(stream net.Conn, authorize UDPAuthorizer, blockPrivate bool) {
 						return
 					}
 					writeBack(name, buf[:nr])
+					// Inbound bytes count toward the requester's budget; a tripped
+					// budget closes the stream so the main loop tears down.
+					if meter != nil && meter(nr) {
+						_ = stream.Close()
+						return
+					}
 				}
 			}(target, c)
 		}
 		cmu.Unlock()
 
 		_, _ = t.conn.Write(payload)
+		// Outbound bytes count toward the requester's budget; on a tripped budget
+		// stop serving this tunnel (the breaker also refuses new connections).
+		if meter != nil && meter(len(payload)) {
+			return
+		}
 	}
 }
 

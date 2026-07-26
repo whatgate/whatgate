@@ -154,7 +154,7 @@ node -coordinator http://host:8080 -invite welcome -exit -region JP \
 - SMTP 端口（25/465/587）默认封禁；`-block-ports` 追加
 - `-block-domains`：目标黑名单——大小写/尾点不敏感，**自动覆盖子域**（封 `evil.com` 也封 `x.evil.com`），条目也可写 IP 或 CIDR（如 `203.0.113.0/24`）
 - `-max-conns`：最大并发连接数；`-max-conns-per-requester`：单个请求方的并发上限（防单点耗尽出口）；`-requester-rate`（配 `-requester-burst`）：单个请求方每秒建连速率上限，挡住"快开快关、绕过并发上限"的 churn 型滥用
-- `-requester-bandwidth`（配 `-requester-bandwidth-burst`，字节/秒）：单个请求方吞吐上限（**熔断**）——超预算即切断当前传输、拒绝其新连接、并下调其声誉，字节预算随时间自动回补恢复；限的是**流量**而非连接数（目前覆盖 TCP 隧道）
+- `-requester-bandwidth`（配 `-requester-bandwidth-burst`，字节/秒）：单个请求方吞吐上限（**熔断**）——超预算即切断当前传输、拒绝其新连接、并下调其声誉，字节预算随时间自动回补恢复；限的是**流量**而非连接数（TCP 与 UDP 出口共用同一预算，UDP 双向计量、超限拆隧道）
 - 出口默认对每条隧道加**超时**（收目标 10s、拨号 15s），防 slowloris/挂死拖垮
 - **SSRF 防护（默认开启）**：出口默认拒绝连接私有/环回/链路本地地址（你的 LAN、`127.0.0.1`、云元数据 `169.254.169.254`）——IP 字面量在授权时拒，域名在拨号后按解析到的真实 IP 拒（防 DNS rebinding）；确需时用 `-allow-private-targets` 放开
 - `-min-reputation`：拒绝声誉低于阈值的请求方（滥用者访问被封目标会被扣分，随后被各出口拒服务；默认禁用）

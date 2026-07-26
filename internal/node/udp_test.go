@@ -109,6 +109,60 @@ func receiveTimeout(s *UDPSession, d time.Duration) (payload []byte, timedOut bo
 	}
 }
 
+// TestGuardedUDPExitBandwidthBreaker checks the per-requester bandwidth breaker
+// applies to UDP: once a requester blows its byte budget, the relay is torn down.
+func TestGuardedUDPExitBandwidthBreaker(t *testing.T) {
+	echo := startUDPEcho(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	exitNode, err := New(ctx, WithListenAddrs("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("new exit: %v", err)
+	}
+	t.Cleanup(func() { _ = exitNode.Close() })
+	guard := exit.NewGuard(exit.Policy{
+		Scope: trust.ScopeOpen, AllowPrivateTargets: true,
+		RequesterBytesPerSec: 1000, RequesterByteBurst: 1000,
+	})
+	exitNode.EnableGuardedUDPExit(GuardedExit{
+		Guard:  guard,
+		TierOf: func(string) trust.Tier { return trust.TierStranger },
+	})
+
+	client, err := New(ctx, WithListenAddrs("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if err := client.Connect(ctx, exitNode.AddrInfo()); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	sess, err := client.OpenUDPSession(ctx, exitNode.ID())
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	// A small datagram is within budget and echoes back.
+	if err := sess.Send(echo, []byte("hi")); err != nil {
+		t.Fatalf("send small: %v", err)
+	}
+	if p, timedOut := receiveTimeout(sess, 4*time.Second); timedOut || string(p) != "hi" {
+		t.Fatalf("small datagram: payload=%q timedOut=%v", p, timedOut)
+	}
+
+	// A datagram far exceeding the byte budget trips the breaker and cuts the relay.
+	_ = sess.Send(echo, make([]byte, 4000))
+	_, _ = receiveTimeout(sess, 500*time.Millisecond) // drain any straggler reply
+
+	// After the breaker trips, further datagrams get no reply (relay is down).
+	_ = sess.Send(echo, []byte("after"))
+	if _, timedOut := receiveTimeout(sess, 2*time.Second); !timedOut {
+		t.Fatal("relay should be cut after the bandwidth breaker trips")
+	}
+}
+
 // TestGuardedUDPExitEnforcesPolicy checks the UDP exit drops datagrams to a
 // policy-blocked target while still serving an allowed one.
 func TestGuardedUDPExitEnforcesPolicy(t *testing.T) {
