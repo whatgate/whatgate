@@ -109,5 +109,12 @@ func (n *Node) FetchNodeRecord(ctx context.Context, p peer.ID, pinnedRoot crypto
 	if err != nil {
 		return membership.NodeRecord{}, fmt.Errorf("noderecord: %w", err)
 	}
+
+	// Drop any address that would steer a dial at private/loopback/metadata
+	// ranges (SSRF). A record left with no dial-safe address is unusable.
+	rec.Addrs = SafeDialAddrs(rec.Addrs)
+	if len(rec.Addrs) == 0 {
+		return membership.NodeRecord{}, errors.New("noderecord: no dial-safe addresses")
+	}
 	return rec, nil
 }

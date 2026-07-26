@@ -89,6 +89,42 @@ func TestFetchNodeRecordRejectsRollback(t *testing.T) {
 	}
 }
 
+// A fetched record is stripped of unsafe (private/loopback/metadata) addresses,
+// so a malicious member cannot advertise a record that steers a dial at our LAN.
+func TestFetchNodeRecordStripsUnsafeAddrs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	rootPriv, rootPub, _ := crypto.GenerateEd25519Key(rand.Reader)
+	issuerPriv, issuerPub, _ := crypto.GenerateEd25519Key(rand.Reader)
+	issuerCert, _ := membership.SignIssuerCert(rootPriv, issuerPub, "iss",
+		[]membership.Role{membership.RoleMember, membership.RoleExit}, time.Now(), time.Now().Add(365*24*time.Hour), 1, 0)
+
+	client, _ := New(ctx)
+	defer client.Close()
+	exit, _ := New(ctx)
+	defer exit.Close()
+
+	subject := exit.ID().String()
+	memberCert, _ := membership.SignMemberCert(issuerPriv, subject, "iss",
+		[]membership.Role{membership.RoleMember, membership.RoleExit}, time.Now(), time.Now().Add(30*24*time.Hour), 1, 0)
+	rec := membership.NodeRecord{V: 1, Subject: subject, Roles: []membership.Role{membership.RoleExit},
+		Addrs:  []string{"/ip4/1.2.3.4/tcp/443/ws", "/ip4/169.254.169.254/tcp/80", "/ip4/127.0.0.1/tcp/4001"},
+		Region: "JP"}
+	signedRec, _ := membership.SignNodeRecord(exit.hostKey(), rec, time.Now(), time.Now().Add(5*time.Minute), 1)
+	exit.SetMemberCredential(memberCert, issuerCert)
+	exit.SetNodeRecord(signedRec)
+
+	_ = client.h.Connect(ctx, peer.AddrInfo{ID: exit.ID(), Addrs: exit.h.Addrs()})
+	got, err := client.FetchNodeRecord(ctx, exit.ID(), rootPub, membership.VerifyOpts{}, 0)
+	if err != nil {
+		t.Fatalf("FetchNodeRecord: %v", err)
+	}
+	if len(got.Addrs) != 1 || got.Addrs[0] != "/ip4/1.2.3.4/tcp/443/ws" {
+		t.Fatalf("addrs = %v, want only the public one", got.Addrs)
+	}
+}
+
 // hostKey exposes the node's identity private key for tests that sign records.
 func (n *Node) hostKey() crypto.PrivKey {
 	return n.h.Peerstore().PrivKey(n.h.ID())
