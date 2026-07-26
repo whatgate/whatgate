@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/connmgr"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -47,6 +48,7 @@ func (n *Node) ExitLoad() int { return int(n.exitLoad.Load()) }
 type config struct {
 	listenAddrs  []string
 	staticRelays []peer.AddrInfo
+	gater        connmgr.ConnectionGater
 }
 
 // Option configures a Node.
@@ -88,6 +90,11 @@ func New(ctx context.Context, opts ...Option) (*Node, error) {
 	// connectivity cannot be established.
 	if len(cfg.staticRelays) > 0 {
 		libOpts = append(libOpts, libp2p.EnableAutoRelayWithStaticRelays(cfg.staticRelays))
+	}
+	// Member gating (opt-in): refuse connections from non-members at the host
+	// level, so the private discovery plane admits only known members.
+	if cfg.gater != nil {
+		libOpts = append(libOpts, libp2p.ConnectionGater(cfg.gater))
 	}
 
 	h, err := libp2p.New(libOpts...)
