@@ -38,12 +38,13 @@ type Client struct {
 	// responses must be signed by. A pinned client verifies every directory and
 	// refuses any that is unsigned or signed by a different key — so a
 	// reachable-but-rogue endpoint cannot inject a poisoned directory.
-	pinnedKey  crypto.PubKey
-	dirMu      sync.Mutex
-	dirFloor   uint64 // highest directory serial accepted so far (anti-rollback)
-	relayFloor uint64 // highest relay serial accepted so far (anti-rollback)
-	cachePath  string // if set (and pinned), the last verified directory is cached here
-	stale      bool   // whether the last DirectoryFor result came from the cache
+	pinnedKey      crypto.PubKey
+	dirMu          sync.Mutex
+	dirFloor       uint64 // highest directory serial accepted so far (anti-rollback)
+	relayFloor     uint64 // highest relay serial accepted so far (anti-rollback)
+	bootstrapFloor uint64 // highest bootstrap-list serial accepted so far (anti-rollback)
+	cachePath      string // if set (and pinned), the last verified directory is cached here
+	stale          bool   // whether the last DirectoryFor result came from the cache
 }
 
 // SetDirectoryCache enables persisting the last verified directory to path

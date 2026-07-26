@@ -65,6 +65,7 @@ func main() {
 	coordURL := flag.String("coordinator", "", "coordinator base URL(s), comma-separated for failover, e.g. https://a:8080,https://b:8080")
 	coordKey := flag.String("coordinator-key", "", "pinned coordinator public key (base64, printed by the coordinator): the directory must be signed by it, else it is rejected — defeats a rogue/MITM coordinator")
 	coordCache := flag.String("coordinator-cache", "", "path to cache the last verified directory (requires -coordinator-key); served when every coordinator endpoint is unreachable, so a blocked coordinator doesn't instantly disconnect you")
+	bootstrapURL := flag.String("bootstrap-url", "", "out-of-band URL (CDN/GitHub raw) serving a signed bootstrap list (requires -coordinator-key); when every known coordinator is blocked at cold start, fetch it to self-heal onto fresh endpoints")
 	invite := flag.String("invite", "", "invite code to redeem when joining via coordinator")
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
 	toRegion := flag.String("to", "", "desired exit region to discover via coordinator (client mode)")
@@ -129,9 +130,15 @@ func main() {
 				coord.SetDirectoryCache(*coordCache)
 				fmt.Printf("directory cache: %s\n", *coordCache)
 			}
+			if *bootstrapURL != "" {
+				fmt.Printf("bootstrap URL: %s (used if coordinators are unreachable at cold start)\n", *bootstrapURL)
+			}
 		} else {
 			if *coordCache != "" {
 				fmt.Println("WARNING: -coordinator-cache ignored without -coordinator-key (only verified directories are cached)")
+			}
+			if *bootstrapURL != "" {
+				fmt.Println("WARNING: -bootstrap-url ignored without -coordinator-key (an unauthenticated bootstrap list is a poisoning vector and is refused)")
 			}
 			fmt.Println("WARNING: no -coordinator-key pinned; the directory is unauthenticated — a rogue/MITM coordinator can steer you onto a hostile exit")
 		}
@@ -326,6 +333,18 @@ func main() {
 	if coord != nil {
 		if *invite != "" {
 			issuer, err := coord.Join(*invite, selfID)
+			if err != nil && *bootstrapURL != "" {
+				// Cold-start self-heal (C2): every known coordinator is unreachable,
+				// so pull a signed endpoint list from the out-of-band channel and
+				// retry. RefreshFromBootstrap verifies against the pinned key, so a
+				// tampering CDN can't redirect us onto adversary coordinators.
+				fmt.Printf("join failed (%v); fetching bootstrap list from %s\n", err, *bootstrapURL)
+				if berr := coord.RefreshFromBootstrap(*bootstrapURL); berr != nil {
+					log.Fatalf("bootstrap self-heal failed: %v (join error: %v)", berr, err)
+				}
+				fmt.Printf("bootstrap: healed onto %d endpoint(s), retrying join\n", len(coord.Endpoints()))
+				issuer, err = coord.Join(*invite, selfID)
+			}
 			if err != nil {
 				log.Fatalf("join via coordinator: %v", err)
 			}

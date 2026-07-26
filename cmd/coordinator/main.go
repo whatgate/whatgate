@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/whatgate/whatgate/internal/coordinator"
@@ -42,10 +43,32 @@ func main() {
 	statePath := flag.String("state", "", "path to a JSON state file for durable admissions/groups/reputation (empty = in-memory only)")
 	repDecay := flag.Int("reputation-decay", 1, "reputation points to decay toward zero each interval (0 = disabled)")
 	repDecayInterval := flag.Duration("reputation-decay-interval", time.Hour, "how often to apply reputation decay")
+	emitBootstrap := flag.String("emit-bootstrap", "", "sign a bootstrap list of the given comma-separated coordinator URLs (needs -signing-key), print it to stdout, and exit; host the output on an out-of-band channel (CDN/GitHub raw) as a node -bootstrap-url")
+	bootstrapSerial := flag.Uint64("bootstrap-serial", 0, "monotonic serial for -emit-bootstrap; must strictly increase across publications (older ones are rejected as rollbacks)")
+	bootstrapTTL := flag.Duration("bootstrap-ttl", 30*24*time.Hour, "how long a -emit-bootstrap list stays acceptable to nodes")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("whatgate coordinator %s\n", version)
+		return
+	}
+
+	// Producer mode: sign a bootstrap list and exit. This is an offline operator
+	// tool, not part of serving — a node self-heals by fetching this output from a
+	// hard-to-block channel when its coordinators are all blocked (Tier C2).
+	if *emitBootstrap != "" {
+		if *signingKey == "" {
+			log.Fatal("coordinator: -emit-bootstrap requires -signing-key (the key nodes pin)")
+		}
+		priv, err := discovery.LoadOrCreateSigningKey(*signingKey)
+		if err != nil {
+			log.Fatalf("signing key: %v", err)
+		}
+		out, err := coordinator.SignBootstrap(priv, *bootstrapSerial, splitEndpoints(*emitBootstrap), *bootstrapTTL)
+		if err != nil {
+			log.Fatalf("emit bootstrap: %v", err)
+		}
+		fmt.Println(string(out))
 		return
 	}
 
@@ -135,4 +158,17 @@ func main() {
 	}
 	fmt.Println("TLS: DISABLED — control plane is plaintext; use -tls-cert/-tls-key or a TLS-terminating proxy in production")
 	log.Fatal(httpSrv.ListenAndServe())
+}
+
+// splitEndpoints parses a comma-separated list of URLs, trimming spaces and
+// dropping empties.
+func splitEndpoints(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
