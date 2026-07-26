@@ -44,6 +44,12 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "path to the TLS private key (pairs with -tls-cert)")
 	signingKey := flag.String("signing-key", "", "path to the control-plane signing key (created if missing); signs the directory so nodes pinning the printed public key reject a forged/MITM directory")
 	relayListen := flag.String("relay-listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr for the co-located relay (empty to disable)")
+	relayCircuitDuration := flag.Duration("relay-circuit-duration", 0, "relay resource limit: per-circuit time cap before reset (0 = libp2p default 2m)")
+	relayCircuitData := flag.Int64("relay-circuit-data", 0, "relay resource limit: per-circuit per-direction byte cap before reset (0 = libp2p default 128KB)")
+	relayMaxReservations := flag.Int("relay-max-reservations", 0, "relay resource limit: max active reservation slots (0 = libp2p default 128)")
+	relayMaxCircuitsPerPeer := flag.Int("relay-max-circuits-per-peer", 0, "relay resource limit: max simultaneous circuits per peer (0 = libp2p default 16)")
+	relayMaxReservationsPerIP := flag.Int("relay-max-reservations-per-ip", 0, "relay resource limit: max reservations from one IP (0 = libp2p default 8)")
+	relayReservationTTL := flag.Duration("relay-reservation-ttl", 0, "relay resource limit: reservation lifetime (0 = libp2p default 1h)")
 	statePath := flag.String("state", "", "path to a JSON state file for durable admissions/groups/reputation (empty = in-memory only)")
 	repDecay := flag.Int("reputation-decay", 1, "reputation points to decay toward zero each interval (0 = disabled)")
 	repDecayInterval := flag.Duration("reputation-decay-interval", time.Hour, "how often to apply reputation decay")
@@ -229,7 +235,14 @@ func main() {
 
 	// Co-locate a Circuit Relay v2 so nodes that cannot hole-punch still connect.
 	if *relayListen != "" {
-		rl, err := relay.New(context.Background(), *relayListen)
+		rl, err := relay.New(context.Background(), relay.Limits{
+			CircuitDuration:      *relayCircuitDuration,
+			CircuitDataBytes:     *relayCircuitData,
+			MaxReservations:      *relayMaxReservations,
+			MaxCircuitsPerPeer:   *relayMaxCircuitsPerPeer,
+			MaxReservationsPerIP: *relayMaxReservationsPerIP,
+			ReservationTTL:       *relayReservationTTL,
+		}, *relayListen)
 		if err != nil {
 			log.Fatalf("start relay: %v", err)
 		}
@@ -239,6 +252,10 @@ func main() {
 			addrs = append(addrs, a.String())
 		}
 		srv.SetRelayInfo(rl.ID().String(), addrs)
+		if *relayCircuitDuration > 0 || *relayCircuitData > 0 || *relayMaxReservations > 0 ||
+			*relayMaxCircuitsPerPeer > 0 || *relayMaxReservationsPerIP > 0 || *relayReservationTTL > 0 {
+			fmt.Println("relay resource limits: tightened from libp2p defaults")
+		}
 		fmt.Printf("relay peer id: %s\n", rl.ID())
 		for _, a := range addrs {
 			fmt.Printf("  relay addr: %s/p2p/%s\n", a, rl.ID())

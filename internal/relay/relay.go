@@ -8,6 +8,7 @@ package relay
 
 import (
 	"context"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -22,11 +23,53 @@ type Relay struct {
 	svc *relayv2.Relay
 }
 
+// Limits caps a relay's resource use, so a co-located relay can't be abused to
+// exhaust the operator's bandwidth or slots. A zero field keeps the libp2p
+// default; set only what you want to tighten.
+type Limits struct {
+	CircuitDuration      time.Duration // per-circuit time limit before reset (default 2min)
+	CircuitDataBytes     int64         // per-circuit per-direction data cap before reset (default 128KB)
+	MaxReservations      int           // max active reservation slots (default 128)
+	MaxCircuitsPerPeer   int           // max simultaneous open circuits per peer (default 16)
+	MaxReservationsPerIP int           // max reservations from one IP (default 8)
+	ReservationTTL       time.Duration // reservation lifetime (default 1h)
+}
+
+// buildResources maps WhatGate Limits onto libp2p relay Resources, starting from
+// the library defaults and overriding only the fields the operator set (non-zero).
+func buildResources(l Limits) relayv2.Resources {
+	rc := relayv2.DefaultResources()
+	if l.CircuitDuration > 0 || l.CircuitDataBytes > 0 {
+		lim := *rc.Limit // copy the default limit so the unset half is preserved
+		if l.CircuitDuration > 0 {
+			lim.Duration = l.CircuitDuration
+		}
+		if l.CircuitDataBytes > 0 {
+			lim.Data = l.CircuitDataBytes
+		}
+		rc.Limit = &lim
+	}
+	if l.MaxReservations > 0 {
+		rc.MaxReservations = l.MaxReservations
+	}
+	if l.MaxCircuitsPerPeer > 0 {
+		rc.MaxCircuits = l.MaxCircuitsPerPeer
+	}
+	if l.MaxReservationsPerIP > 0 {
+		rc.MaxReservationsPerIP = l.MaxReservationsPerIP
+	}
+	if l.ReservationTTL > 0 {
+		rc.ReservationTTL = l.ReservationTTL
+	}
+	return rc
+}
+
 // New starts a relay listening on the given multiaddr strings (default: an
-// OS-assigned TCP port on all interfaces). The hop service is enabled
+// OS-assigned TCP port on all interfaces). limits caps the relay's resource use
+// (a zero Limits keeps libp2p defaults). The hop service is enabled
 // unconditionally (via the circuitv2 relay directly) so it works regardless of
 // the host's perceived reachability.
-func New(ctx context.Context, listenAddrs ...string) (*Relay, error) {
+func New(ctx context.Context, limits Limits, listenAddrs ...string) (*Relay, error) {
 	if len(listenAddrs) == 0 {
 		listenAddrs = []string{"/ip4/0.0.0.0/tcp/0"}
 	}
@@ -34,7 +77,7 @@ func New(ctx context.Context, listenAddrs ...string) (*Relay, error) {
 	if err != nil {
 		return nil, err
 	}
-	svc, err := relayv2.New(h)
+	svc, err := relayv2.New(h, relayv2.WithResources(buildResources(limits)))
 	if err != nil {
 		_ = h.Close()
 		return nil, err

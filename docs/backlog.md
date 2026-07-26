@@ -33,7 +33,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 | P1 | ~~**状态持久化**~~ ✅ **已完成** | 邀请/准入/信任图/小网口令/声誉快照到 JSON 文件（`internal/persist`，原子写），变更即存、启动即载（coordinator `-state`）。目录仍短时（节点续注册自愈）。规模变大可换 bbolt。 |
 | P1 | **跨 NAT 真实验证** | 用两台不同网络的机器实测 DCUtR 打洞与 AutoRelay 自动预约（回环无法覆盖）。 |
 | P2 | **协调器高可用 / 去中心目录** | 首版单实例；后续多实例或渐进式 DHT 目录，消除单点。 |
-| P2 | **中继资源限制** | 给 Circuit Relay 加带宽/时长/预约数配额，防中继被滥用。 |
+| P2 | ~~**中继资源限制**~~ ✅ **已完成** | `relay.Limits` 映射到 libp2p Circuit Relay v2 的 `Resources`（从库默认起，仅覆盖非零项）：每电路时长/单向数据上限、最大预约槽、单 peer 电路数、单 IP 预约数、预约 TTL。coordinator `-relay-circuit-duration`/`-relay-circuit-data`/`-relay-max-reservations`/`-relay-max-circuits-per-peer`/`-relay-max-reservations-per-ip`/`-relay-reservation-ttl`（全默认 0 = 库默认）。防中继被当免费带宽/占满槽位。 |
 
 ## D. 传输 / 选路
 

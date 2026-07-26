@@ -21,7 +21,7 @@ func TestTunnelOverCircuitRelay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	r, err := relay.New(ctx, "/ip4/127.0.0.1/tcp/0")
+	r, err := relay.New(ctx, relay.Limits{}, "/ip4/127.0.0.1/tcp/0")
 	if err != nil {
 		t.Fatalf("new relay: %v", err)
 	}
