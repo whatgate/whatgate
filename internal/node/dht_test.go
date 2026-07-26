@@ -112,3 +112,55 @@ func TestPrivateDHTMembersFormRoutingTable(t *testing.T) {
 	}
 	t.Fatalf("private DHT routing tables did not form: A=%d B=%d", dhtA.RoutingTableSize(), dhtB.RoutingTableSize())
 }
+
+// An exit advertising itself under a role/region/epoch capability is found by a
+// member querying the same capability — the DHT provider layer of two-layer
+// discovery (find candidate PeerID, then fetch+verify its record separately).
+func TestPrivateDHTAdvertiseAndFind(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	msA, msB := NewMemberSet(), NewMemberSet()
+	client, err := New(ctx, WithMemberGater(msA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	exit, err := New(ctx, WithMemberGater(msB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exit.Close()
+	msA.Set([]peer.ID{exit.ID()})
+	msB.Set([]peer.ID{client.ID()})
+
+	dhtClient, err := client.StartPrivateDHT(ctx, msA, []peer.AddrInfo{addrInfo(exit.h)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dhtClient.Close()
+	dhtExit, err := exit.StartPrivateDHT(ctx, msB, []peer.AddrInfo{addrInfo(client.h)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dhtExit.Close()
+
+	// Wait for the routing tables to form, then the exit advertises.
+	for i := 0; i < 50 && (dhtClient.RoutingTableSize() == 0 || dhtExit.RoutingTableSize() == 0); i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err := dhtExit.Advertise(ctx, "exit", "JP", 1); err != nil {
+		t.Fatalf("Advertise: %v", err)
+	}
+
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, id := range dhtClient.FindCandidates(ctx, "exit", "JP", 1, 8) {
+			if id == exit.ID() {
+				return // found the advertised exit under the capability
+			}
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatal("client did not find the exit advertised under the exit/JP/epoch-1 capability")
+}
