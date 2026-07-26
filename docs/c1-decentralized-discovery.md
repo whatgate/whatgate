@@ -15,7 +15,7 @@
 | **签发根** | **离线根 + 在线受限 issuer**（评审 P0 强制，一期即做） | 在线 issuer 子证书由**离线根**签发、短期、用途受限，只能签**普通成员**；**出口/relay 授权须离线根或双人审批**。在线 join 服务单签**不可**获得出口权。含 issuer 撤销/轮换/append-only 审计/客户端 issuer allowlist。 |
 | **PeerID 轮换** | **v1 禁止**（评审 P0） | 保持长期 transport PeerID（=身份密钥）；只轮换**地址 + 广告 nonce + 短期广告签名密钥**。身份迁移是**独立协议项目**，不放进 C1。 |
 | **rendezvous / 身份轮换** | **移出 v1 核心（已裁决 2026-07-26，采纳 Codex）** | v1 冻结在"**认证 DHT provider 索引 + 认证记录拉取 + 四状态合并 + 治理**"；rendezvous 与 PeerID 轮换作**默认关闭的独立后续能力**（各自先过独立威胁模型/量化验收）。**枚举面加固（§5/§7 的 epoch capability / 最小字段 / 短期地址 / 限速）保留在 v1 核心。** |
-| **跨模块契约** | **C1.0 前冻结**（评审 P0） | 证书/撤销 checkpoint 格式、bootstrap 信任包、DHT 入站认证、挑战绑定主体、pnet 模式、B2 对 DHT/relay 流量的覆盖——**先冻结带版本协商 + 降级拒绝**，否则后补必返工。 |
+| **跨模块契约** | **C1.0 已冻结**（✅ 见 §15） | 证书/撤销 checkpoint 格式、bootstrap 信任包、DHT 入站认证（两段）、挑战绑定主体、pnet 模式、版本协商 + 降级拒绝——已冻结。 |
 
 ## 0. 目的 / 非目的
 
@@ -122,7 +122,7 @@ A0 目录/relay(权威, 带信任层级)       │ 出口: Provide 到"每epoch�
 
 | 子切片 | 内容 | 关键测试 / 红队 |
 |---|---|---|
-| **C1.0 契约冻结 + blocker 矩阵 spike** | ①冻结跨模块契约（证书/撤销 checkpoint/bootstrap bundle/DHT 入站认证/挑战绑主体/**pnet 模式**/B2 覆盖，带版本协商+降级拒绝）②**blocker 矩阵**探 v0.48：**入站 DHT 鉴权(ConnectionGater)**、私有 validator、**多值索引 vs provider 两层**、路由表污染防护、resource manager 限额、**撤销陈旧处理**、provider 刷新。产出 `docs/c1-dht-compat.md` | 任一 blocker 在 v0.48 组合中**不可实现 → 停止"私有成员 DHT"假设**，改显式认证 discovery 服务/自定义协议。不以"应用后验"掩盖缺口 |
+| **C1.0 契约冻结 + blocker 矩阵 spike** ✅**已完成** | ①**blocker 矩阵已实测 GO**（[c1-dht-compat.md](c1-dht-compat.md)：前缀隔离/RT-filter/gater 服务端强制/provider 单指针/PutValue 单值/pnet 兼容 六项成立；kad-dht v0.42.1 恰配 libp2p v0.48.0）②**契约已冻结**（§15：对象 schema+版本、protocol ID、两段入站认证、挑战绑主体、pnet 默认关、版本协商+降级拒绝） | 无 blocker 命中"停止假设" → **私有认证成员 DHT 可行**，进入 C1.1。探针跑完已移除、go.mod 复原（kad-dht 至 C1.1 再入） |
 | **C1.1 离线根 + 在线受限 issuer + 成员证书** | 离线根签 issuer 子证书；协调器准入后用 issuer 签普通成员证书；出口/relay 证书须根/双签；客户端 issuer allowlist | 无效/过期/被撤销/越权(在线 issuer 签出口)证书 → 拒 |
 | **C1.2 撤销 checkpoint + 陈旧兜底** | 根签 checkpoint（thisUpdate/nextUpdate/版本/陈旧上限）；带外+DHT 分发；离线超期 → 应急受限 scope | 撤销成员记录被拒；超陈旧上限 → 拒建普通隧道、仅应急；防 fail-open |
 | **C1.3 私有认证 DHT 引导 + 入站门控** | node 挂 DHT + `/whatgate/kad` 前缀 + **ConnectionGater 成员握手**；server/client 模式；bootstrap bundle 供给；双轨接线 | 未认证连接不进路由表/无 RPC；无协调器时经认证 DHT 发现 |
@@ -175,3 +175,47 @@ Codex（只读对抗评审）提出约 19 条独立问题（~16×P0、~10×P1、
 12. **pnet × C1 先决**（P1，§12）、**挑战禁用共享 HMAC**（P1，§8）、**一致性独立性定义**（P1，§8）、**relay 治理闭环**（P1，§8）、**C1.0 blocker 矩阵**（P1，§10）。
 
 **范围冲突已裁决（2026-07-26）**：用户原选"v1 全量一期做完"（含 rendezvous + 枚举加固 + 身份轮换）；Codex P0/P1 建议把 **rendezvous 与身份轮换移出 v1 核心**（默认关闭、独立后续），理由是它们扩大半中心化在线情报面/与证书信任模型冲突，且不能弥补 DHT 信任缺陷。**用户已裁决采纳 Codex**：rendezvous 与 PeerID 轮换移出 v1 核心（§6、§10 末、§13.4）；**枚举面加固保留在 v1 核心**（§5/§7）。v1 = 认证 DHT 索引 + 认证记录拉取 + 四状态合并 + Sybil/eclipse/relay 治理 + 枚举加固。
+
+## 15. C1.0 契约冻结（2026-07-26，据 blocker 矩阵 GO 后冻结）
+
+> **前置状态**：blocker 矩阵**已实测 GO**（[c1-dht-compat.md](c1-dht-compat.md)：前缀隔离/RT-filter/gater 强制/provider 单指针/PutValue 单值/pnet 兼容 六项成立）。以下把 C1.1+ 依赖的跨模块契约冻结为**带版本 + 降级拒绝**的确定形态，避免后补返工（评审 13.6）。**格式冻结，字段可加不可改语义**。
+
+### 15.1 签名对象（复用 A0 `discovery.Signed`，新增 type + 每对象 `v` 字段）
+
+所有对象走 `discovery.Signed` 信封（域分隔 `canonical`、单调序号、过期、`RevocationEpoch`、公钥钉扎）。payload 内首字段一律 `"v": 1`（对象格式版本）；消费者**拒绝 `v` 高于自身支持上限或低于 `minAcceptable`**。
+
+- `TypeMemberCert`（成员证书）：`{v, subject(PeerID), issuer, roles[], capsHash, notBefore, notAfter, serial, revEpoch}`。`roles ⊆ {member, exit, relay}`；**`exit`/`relay` 角色的证书须由离线根或双签 issuer 签发**（在线受限 issuer 只能签 `member`）。
+- `TypeNodeRecord`（出口/中继记录）：`{v, subject(PeerID), roles[], addrs[], region, epoch, generation, notAfter(分钟级), cert(内嵌或引用 TypeMemberCert)}`。**主键=generation 严格递增**（反回滚），签名时间仅作界。
+- `TypeRevocationCheckpoint`（撤销 checkpoint）：`{v, issuerRoot, thisUpdate, nextUpdate, version(单调), maxStaleness, revoked[](subject+revEpoch), rootRotation?}`。**离线超 `maxStaleness` → 仅应急受限 scope**，不建普通隧道。
+- `TypeBootstrapBundle`（C2 扩展，替代裸 `BootstrapList`）：`{v, endpoints[](协调器), dhtSeeds[](bootstrap PeerID+addrs), certStatusSnapshot(最小), serial, notAfter}`。C2 `RefreshFromBootstrap` 消费时**验签 + 验内含 certStatusSnapshot**。
+
+### 15.2 protocol ID（semver，`/whatgate/<name>/<major.minor>`）
+
+- **DHT**：`dht.ProtocolPrefix("/whatgate/kad")` → `/whatgate/kad/1.0.0`（与公有 IPFS DHT 隔离，实测成立）。
+- **成员认证握手**：`/whatgate/member-auth/1.0.0`——连接建立后（Noise 已认证 PeerID）跑此协议交换 `TypeMemberCert` + 应答**挑战**（§15.4）。**未通过 → 断连、不进路由表、不答任何 DHT/记录 RPC。**
+- **节点记录拉取**：`/whatgate/noderecord/1.0.0`——查询者对 `FindProviders` 得到的候选 PeerID **直接**发起此认证 stream 拉取其 `TypeNodeRecord`（**不经 provider payload、不经 `PutValue`**，实测证实二者不可承载多值/带 payload）。含**连通性挑战 nonce**（防挂旧址）。
+- **撤销 checkpoint 分发**：`/whatgate/revocation/1.0.0`（DHT 冗余）+ C2 带外。
+
+### 15.3 DHT 入站认证（两段，实测约束驱动）
+
+blocker 矩阵证实 gater 在 `InterceptSecured` 只拿到 **Noise 认证过的 PeerID**（拿不到证书），故冻结为**两段**：
+1. **粗准入（PeerID 粒度）**：`ConnectionGater` + `dht.RoutingTableFilter` 用**本地已知成员 PeerID 集合**（来自协调器目录/带外/已验证记录缓存）过滤——非集合内 PeerID **服务端强制不保留连接、不进路由表**（实测 `Connectedness=NotConnected` + RT 无条目；**不依赖"远端连不上"**）。
+2. **证书校验（连接后）**：`/whatgate/member-auth/1.0.0` 校验 `TypeMemberCert` 链 + 未撤销 + 挑战。**两段都过才服务 RPC/记录拉取。**
+
+> 首次冷启动的成员 PeerID 集合来自 `TypeBootstrapBundle.certStatusSnapshot` 与 bootstrap 节点的 member-auth，解冷启动循环（评审 P0）。
+
+### 15.4 挑战绑定（禁用共享 HMAC，评审 P1）
+
+挑战 = **服务端 nonce + 请求方成员私钥签名**（沿用 `internal/authn` 思路，绑 PeerID），或 issuer 发放的**不可转让限额 blind token**。**禁止全体共享 HMAC**（泄露一成员即可离线伪造）。与安全评审 F5 合并设计。
+
+### 15.5 pnet 模式（与 B1 决策合并）
+
+blocker 矩阵证实 **DHT 在 pnet 下可用**（TCP+WS）。但**当前 B1 暂缓 → C1 默认不启用 pnet**，成员性靠 §15.3 的 DHT 入站证书认证。若未来启用 pnet：作**传输层门槛**，**不替代**证书/撤销/配额；启用即全 bootstrap/relay/DHT 共享 swarm key（单点泄露=网络级准入放大，须接受）。**禁止"先叠加再看"**——切换须重跑攻击矩阵。
+
+### 15.6 版本协商 + 降级拒绝
+
+- **对象**：`v` + `minAcceptable`；低于下限或高于上限 → 拒。
+- **协议**：libp2p multistream 协商 `/whatgate/*/<major.minor>`；**major 不匹配拒绝**，minor 向后兼容。
+- **降级攻击**：消费者记录已见的最高 `major`，拒绝被诱导降级到更低 major（类 A0 反回滚 floor 思路）。
+
+> **C1.0 完成判据**：blocker 矩阵 GO（✅）+ 本节契约冻结（✅）。下一步 C1.1（离线根 + 在线受限 issuer + 成员证书），正式引入 `go-libp2p-kad-dht@v0.42.1` 到 go.mod。
