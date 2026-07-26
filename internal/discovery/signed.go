@@ -37,6 +37,9 @@ const (
 	// grant member certs of certain roles; that issuer signs member certs.
 	TypeIssuerCert = "issuer-cert"
 	TypeMemberCert = "member-cert"
+	// TypeNodeRecord is an exit/relay's short-lived signed discovery record
+	// (addrs/region/roles), advertised on the private DHT (C1.4).
+	TypeNodeRecord = "node-record"
 	// TypeRevocationCheckpoint is a root-signed, monotonically-versioned snapshot
 	// of revoked subjects/issuers with a freshness window (C1.2). It supersedes
 	// the placeholder TypeRevocation.

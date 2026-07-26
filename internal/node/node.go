@@ -40,9 +40,10 @@ type Node struct {
 	h        host.Host
 	exitLoad atomic.Int64 // active inbound tunnel streams being served as exit
 
-	credMu     sync.Mutex // guards the member credential chain served over member-auth
+	credMu     sync.Mutex // guards the member credential chain + node record served to peers
 	memberCert []byte
 	issuerCert []byte
+	nodeRecord []byte
 }
 
 // ExitLoad reports how many tunnel streams this node is currently serving as an
