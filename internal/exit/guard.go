@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/whatgate/whatgate/internal/ratelimit"
 	"github.com/whatgate/whatgate/internal/trust"
 )
 
@@ -24,6 +25,7 @@ var (
 	ErrBlockedPrivateTarget  = errors.New("exit: destination is a private/loopback/link-local address")
 	ErrTooManyConns          = errors.New("exit: connection limit reached")
 	ErrTooManyRequesterConns = errors.New("exit: per-requester connection limit reached")
+	ErrRequesterRateLimited  = errors.New("exit: per-requester connection rate limit exceeded")
 )
 
 // DefaultBlockedPorts returns ports an exit should refuse by default (e.g. SMTP,
@@ -44,6 +46,13 @@ type Policy struct {
 	BlockedDomains         map[string]bool // destination hosts to refuse
 	MaxConns               int             // max concurrent served connections (0 = unlimited)
 	MaxConnsPerRequester   int             // max concurrent connections per requester (0 = unlimited)
+	// RequesterRatePerSec limits how fast a single requester may open new
+	// connections (0 = unlimited). Unlike MaxConnsPerRequester, it throttles
+	// churn — rapid open/close bursts that never occupy a concurrency slot.
+	// RequesterBurst is the momentary allowance; it defaults to RequesterRatePerSec
+	// when unset (must be >= 1 to admit any request).
+	RequesterRatePerSec float64
+	RequesterBurst      float64
 	// AllowPrivateTargets, when true, permits dialing private/loopback/link-local
 	// destinations. Default false blocks them (SSRF protection) — see
 	// DisallowedTargetIP and DialControl.
@@ -67,6 +76,8 @@ type Guard struct {
 	active int
 	perReq map[string]int // active connections per requester ID
 
+	reqLimiter *ratelimit.Limiter // per-requester connection-rate limiter (nil = disabled)
+
 	domMu          sync.RWMutex
 	blockedDomains map[string]bool // normalized domains (static policy + threat feed)
 	blockedNets    []*net.IPNet    // IP/CIDR entries from the block set
@@ -76,6 +87,13 @@ type Guard struct {
 func NewGuard(p Policy) *Guard {
 	g := &Guard{policy: p, perReq: make(map[string]int)}
 	g.blockedDomains, g.blockedNets = parseBlockSet(p.BlockedDomains)
+	if p.RequesterRatePerSec > 0 {
+		burst := p.RequesterBurst
+		if burst <= 0 {
+			burst = p.RequesterRatePerSec
+		}
+		g.reqLimiter = ratelimit.New(p.RequesterRatePerSec, burst)
+	}
 	return g
 }
 
@@ -189,6 +207,12 @@ func (g *Guard) Authorize(req Request) (release func(), err error) {
 		if ip := net.ParseIP(req.Host); ip != nil && DisallowedTargetIP(ip) {
 			return nil, ErrBlockedPrivateTarget
 		}
+	}
+
+	// Throttle a single requester's connection-establishment rate (churn), a
+	// distinct control from the concurrency cap below.
+	if g.reqLimiter != nil && !g.reqLimiter.Allow(req.RequesterID) {
+		return nil, ErrRequesterRateLimited
 	}
 
 	g.mu.Lock()

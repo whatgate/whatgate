@@ -88,6 +88,8 @@ func main() {
 	blockDomains := flag.String("block-domains", "", "ExitGuard: destination domains to block, comma-separated")
 	maxConns := flag.Int("max-conns", 0, "ExitGuard: max concurrent connections to serve as exit (0 = unlimited)")
 	maxConnsPerReq := flag.Int("max-conns-per-requester", 0, "ExitGuard: max concurrent connections per requester peer (0 = unlimited; caps single-peer resource exhaustion)")
+	reqRate := flag.Float64("requester-rate", 0, "ExitGuard: max new connections per second a single requester may open (0 = unlimited; throttles open/close churn that evades the concurrency cap)")
+	reqBurst := flag.Float64("requester-burst", 0, "ExitGuard: momentary burst allowance for -requester-rate (0 = defaults to -requester-rate)")
 	minReputation := flag.Int("min-reputation", -1_000_000_000, "ExitGuard: refuse requesters whose reputation is below this (default effectively disabled)")
 	allowPrivateTargets := flag.Bool("allow-private-targets", false, "ExitGuard: allow serving requests to private/loopback/link-local addresses (default false blocks SSRF to your LAN, localhost, and cloud metadata)")
 	auditLog := flag.String("audit-log", "", "ExitGuard: append a JSON-lines record of served/denied requests to this file (accountability)")
@@ -230,7 +232,7 @@ func main() {
 			d := net.Dialer{Control: exit.DialControl(*allowPrivateTargets)}
 			return d.DialContext(ctx, "tcp", addr)
 		}
-		policy, err := buildExitPolicy(*exitScope, *blockPorts, *blockDomains, *maxConns, *maxConnsPerReq, *minReputation, *allowPrivateTargets)
+		policy, err := buildExitPolicy(*exitScope, *blockPorts, *blockDomains, *maxConns, *maxConnsPerReq, *minReputation, *allowPrivateTargets, *reqRate, *reqBurst)
 		if err != nil {
 			log.Fatalf("exit policy: %v", err)
 		}
@@ -794,7 +796,7 @@ func keepRegistered(ctx context.Context, c *coordinator.Client, selfID string, n
 
 // buildExitPolicy assembles an ExitGuard policy from CLI flags. SMTP ports are
 // always blocked by default; -block-ports adds to them.
-func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns, maxConnsPerReq, minReputation int, allowPrivate bool) (exit.Policy, error) {
+func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns, maxConnsPerReq, minReputation int, allowPrivate bool, reqRate, reqBurst float64) (exit.Policy, error) {
 	scope, err := trust.ParseScope(scopeStr)
 	if err != nil {
 		return exit.Policy{}, err
@@ -816,6 +818,8 @@ func buildExitPolicy(scopeStr, portsCSV, domainsCSV string, maxConns, maxConnsPe
 		BlockedDomains:         domains,
 		MaxConns:               maxConns,
 		MaxConnsPerRequester:   maxConnsPerReq,
+		RequesterRatePerSec:    reqRate,
+		RequesterBurst:         reqBurst,
 		AllowPrivateTargets:    allowPrivate,
 	}, nil
 }

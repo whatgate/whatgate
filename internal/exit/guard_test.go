@@ -164,6 +164,46 @@ func TestAuthorizeEnforcesPerRequesterCap(t *testing.T) {
 	}
 }
 
+func TestAuthorizeRateLimitsRequesterChurn(t *testing.T) {
+	// A requester that opens and immediately closes connections never trips the
+	// concurrency cap, but the per-requester rate limit still throttles the churn.
+	g := NewGuard(Policy{Scope: trust.ScopeOpen, RequesterRatePerSec: 1, RequesterBurst: 2})
+	reqA := Request{RequesterID: "peerA", RequesterTier: trust.TierStranger, Host: "example.com", Port: 443}
+
+	// Burst of 2 establishment attempts is allowed (released immediately each time).
+	for i := 0; i < 2; i++ {
+		rel, err := g.Authorize(reqA)
+		if err != nil {
+			t.Fatalf("attempt %d within burst: %v", i, err)
+		}
+		rel()
+	}
+	// The 3rd attempt in the same instant exceeds the burst and is refused.
+	if _, err := g.Authorize(reqA); err != ErrRequesterRateLimited {
+		t.Fatalf("over-burst err = %v, want ErrRequesterRateLimited", err)
+	}
+	// A different requester has an independent bucket and is unaffected.
+	reqB := Request{RequesterID: "peerB", RequesterTier: trust.TierStranger, Host: "example.com", Port: 443}
+	if rel, err := g.Authorize(reqB); err != nil {
+		t.Fatalf("peerB should be unaffected: %v", err)
+	} else {
+		rel()
+	}
+}
+
+func TestAuthorizeRateLimitDisabledByDefault(t *testing.T) {
+	// With no rate configured, rapid churn from one requester is never throttled.
+	g := NewGuard(Policy{Scope: trust.ScopeOpen})
+	reqA := Request{RequesterID: "peerA", RequesterTier: trust.TierStranger, Host: "example.com", Port: 443}
+	for i := 0; i < 50; i++ {
+		rel, err := g.Authorize(reqA)
+		if err != nil {
+			t.Fatalf("attempt %d should not be rate limited when disabled: %v", i, err)
+		}
+		rel()
+	}
+}
+
 func TestAuthorizeAllowsAndReleases(t *testing.T) {
 	g := NewGuard(Policy{Scope: trust.ScopeOpen})
 
