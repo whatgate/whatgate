@@ -37,6 +37,10 @@ const (
 	// grant member certs of certain roles; that issuer signs member certs.
 	TypeIssuerCert = "issuer-cert"
 	TypeMemberCert = "member-cert"
+	// TypeRevocationCheckpoint is a root-signed, monotonically-versioned snapshot
+	// of revoked subjects/issuers with a freshness window (C1.2). It supersedes
+	// the placeholder TypeRevocation.
+	TypeRevocationCheckpoint = "revocation-checkpoint"
 )
 
 // Meta is the signed metadata wrapping a payload. All fields are covered by the

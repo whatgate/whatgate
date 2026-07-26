@@ -58,6 +58,15 @@ func main() {
 	issuerCertSerial := flag.Uint64("issuer-cert-serial", 1, "monotonic serial for -emit-issuer-cert")
 	issuerKeyPath := flag.String("issuer-key", "", "path to the ONLINE issuer signing key (created if missing); with -issuer-cert, a successful join issues the peer a {member} cert")
 	issuerCertPath := flag.String("issuer-cert", "", "path to the root-signed issuer cert authorizing -issuer-key (produced by -emit-issuer-cert)")
+	// C1.2 revocation checkpoint (offline-root producer).
+	emitRevocation := flag.Bool("emit-revocation", false, "OFFLINE-ROOT mode: sign a revocation checkpoint (needs -root-key), print it to stdout, and exit; distribute via a hard-to-block channel so nodes learn what is revoked")
+	revokeSubjects := flag.String("revoke-subjects", "", "comma-separated peer IDs to revoke (for -emit-revocation)")
+	revokeIssuers := flag.String("revoke-issuers", "", "comma-separated issuer ids to revoke wholesale (for -emit-revocation; revokes everything they signed)")
+	revocationVersion := flag.Uint64("revocation-version", 1, "monotonic version for -emit-revocation; must strictly increase (older ones are rejected as rollbacks)")
+	revocationEpoch := flag.Uint64("revocation-epoch", 0, "current coarse revocation epoch for -emit-revocation (nodes reject certs below it)")
+	revocationNextUpdate := flag.Duration("revocation-next-update", 6*time.Hour, "when the next checkpoint is expected (advisory freshness)")
+	revocationMaxStaleness := flag.Duration("revocation-max-staleness", 24*time.Hour, "how stale a checkpoint may get before nodes must degrade to emergency-only scope")
+	revocationHardTTL := flag.Duration("revocation-hard-ttl", 30*24*time.Hour, "absolute expiry of the checkpoint envelope (past it, it no longer verifies)")
 	flag.Parse()
 
 	if *showVersion {
@@ -111,6 +120,36 @@ func main() {
 		// Root public key to stderr so `> issuer-cert.json` captures only the cert;
 		// nodes ultimately pin this root to verify the whole credential chain.
 		fmt.Fprintln(os.Stderr, "root public key (pin on nodes to anchor the credential chain):", discovery.EncodePublicKey(root.GetPublic()))
+		fmt.Println(string(out))
+		return
+	}
+
+	// Offline-root mode: sign a revocation checkpoint and exit.
+	if *emitRevocation {
+		if *rootKey == "" {
+			log.Fatal("coordinator: -emit-revocation requires -root-key (keep it offline)")
+		}
+		root, err := discovery.LoadOrCreateSigningKey(*rootKey)
+		if err != nil {
+			log.Fatalf("root key: %v", err)
+		}
+		now := time.Now()
+		cp := membership.RevocationCheckpoint{
+			V:               1,
+			Version:         *revocationVersion,
+			RevEpoch:        *revocationEpoch,
+			ThisUpdate:      now.Unix(),
+			NextUpdate:      now.Add(*revocationNextUpdate).Unix(),
+			MaxStalenessSec: int64(revocationMaxStaleness.Seconds()),
+			RevokedSubjects: splitEndpoints(*revokeSubjects),
+			RevokedIssuers:  splitEndpoints(*revokeIssuers),
+		}
+		out, err := membership.SignRevocationCheckpoint(root, cp, now.Add(*revocationHardTTL))
+		if err != nil {
+			log.Fatalf("emit revocation: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "revocation checkpoint v%d: %d subject(s), %d issuer(s), max-staleness %s\n",
+			cp.Version, len(cp.RevokedSubjects), len(cp.RevokedIssuers), *revocationMaxStaleness)
 		fmt.Println(string(out))
 		return
 	}
