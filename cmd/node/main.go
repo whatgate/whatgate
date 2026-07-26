@@ -37,6 +37,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
@@ -44,6 +45,7 @@ import (
 	"github.com/whatgate/whatgate/internal/coordinator"
 	"github.com/whatgate/whatgate/internal/discovery"
 	"github.com/whatgate/whatgate/internal/exit"
+	"github.com/whatgate/whatgate/internal/membership"
 	"github.com/whatgate/whatgate/internal/node"
 	"github.com/whatgate/whatgate/internal/proxy"
 	"github.com/whatgate/whatgate/internal/routing"
@@ -68,6 +70,9 @@ func main() {
 	coordCache := flag.String("coordinator-cache", "", "path to cache the last verified directory (requires -coordinator-key); served when every coordinator endpoint is unreachable, so a blocked coordinator doesn't instantly disconnect you")
 	bootstrapURL := flag.String("bootstrap-url", "", "out-of-band URL (CDN/GitHub raw) serving a signed bootstrap list (requires -coordinator-key); when every known coordinator is blocked at cold start, fetch it to self-heal onto fresh endpoints")
 	memberCertPath := flag.String("member-cert", "", "path to persist the member credential chain the coordinator issues on join (for Tier C decentralized discovery); owner-only")
+	dhtEnable := flag.Bool("dht", false, "EXPERIMENTAL Tier C: also discover exits over a private authenticated DHT (needs -root-key; unverified on real infrastructure)")
+	rootKeyStr := flag.String("root-key", "", "pinned OFFLINE root public key (base64) that anchors the member credential chain; required with -dht")
+	dhtEpoch := flag.Uint64("dht-epoch", 1, "Tier C discovery capability epoch (advertiser and querier must agree; lets the operator rotate the namespace)")
 	invite := flag.String("invite", "", "invite code to redeem when joining via coordinator")
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
 	toRegion := flag.String("to", "", "desired exit region to discover via coordinator (client mode)")
@@ -333,6 +338,8 @@ func main() {
 
 	// Coordinator-based flow: join, register presence, discover exits.
 	if coord != nil {
+		var dd *dhtDiscovery              // Tier C decentralized discovery (opt-in)
+		var memberCert, issuerCert []byte // credential chain for the private discovery plane
 		if *invite != "" {
 			adm, err := coord.Join(*invite, selfID)
 			if err != nil && *bootstrapURL != "" {
@@ -351,6 +358,7 @@ func main() {
 				log.Fatalf("join via coordinator: %v", err)
 			}
 			fmt.Printf("joined network (vouched by %s)\n", adm.Issuer)
+			memberCert, issuerCert = adm.MemberCert, adm.IssuerCert
 			// C1: persist the member credential chain the coordinator issued, so
 			// this node can later prove membership on the decentralized-discovery
 			// plane (Tier C). Best-effort; absence just means no issuer configured.
@@ -385,6 +393,20 @@ func main() {
 		registerOnce(coord, selfID, n.AddrStrings(), *region, isExitOn(), n.ExitLoad())
 		go keepRegistered(ctx, coord, selfID, n, *region, isExitOn)
 
+		// EXPERIMENTAL Tier C (opt-in via -dht): start a private authenticated DHT
+		// as a redundant discovery plane. Compile/unit verified only — the
+		// gater/relay/DHT/NAT interaction needs two real machines to validate.
+		if *dhtEnable {
+			// Prefer a credential file (may hold an out-of-band exit cert); else use
+			// the one issued on join.
+			if *memberCertPath != "" {
+				if mc, ic, err := loadMemberCredential(*memberCertPath); err == nil {
+					memberCert, issuerCert = mc, ic
+				}
+			}
+			dd = startDHTDiscovery(ctx, n, coord, *rootKeyStr, *dhtEpoch, *region, *asExit, memberCert, issuerCert, selfID)
+		}
+
 		if *toRegion != "" {
 			// A switchable dialer lets the dashboard re-point the SOCKS proxy at a
 			// different exit/region at runtime. It starts empty; dials fail until an
@@ -410,7 +432,7 @@ func main() {
 			serveSOCKS(ctx, *socksAddr, sw, openUDP)
 
 			connectIn := func(sc trust.Scope, region string) (string, error) {
-				ai, err := discoverExit(ctx, n, coord, region, selfID, sc)
+				ai, err := discoverExit(ctx, n, coord, region, selfID, sc, dd)
 				if err != nil {
 					return "", err
 				}
@@ -644,22 +666,37 @@ func serveSOCKS(ctx context.Context, socksAddr string, dialer proxy.Dialer, open
 // discoverExit queries the directory and picks the best exit in the desired
 // region within the user's trust scope, ranked by trust, then measured latency,
 // then reported load.
-func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, region, selfID string, scope trust.Scope) (peer.AddrInfo, error) {
+func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, region, selfID string, scope trust.Scope, dd *dhtDiscovery) (peer.AddrInfo, error) {
 	nodes, tiers, err := c.DirectoryFor(selfID)
 	if err != nil {
-		return peer.AddrInfo{}, err
-	}
-	if c.LastDirectoryStale() {
+		// With Tier C enabled we can still try DHT-only discovery when the
+		// coordinator is entirely unreachable; otherwise surface the error.
+		if dd == nil {
+			return peer.AddrInfo{}, err
+		}
+		log.Printf("coordinator unreachable (%v); attempting DHT-only discovery", err)
+		nodes, tiers = nil, map[string]trust.Tier{}
+	} else if c.LastDirectoryStale() {
 		log.Println("WARNING: coordinator unreachable; using cached (possibly stale) directory")
 	}
 	tierOf := func(p string) trust.Tier { return tiers[p] }
+
+	// Tier C (opt-in): union the authoritative directory with exits discovered and
+	// verified on the private DHT. DHT-only exits enter as strangers, so a
+	// conservative scope excludes them (the DHT plane cannot vouch trust).
+	if dd != nil {
+		if dhtExits := resolveDHTExits(ctx, n, dd, region); len(dhtExits) > 0 {
+			nodes, tierOf = routing.MergeExits(nodes, tierOf, dhtExits)
+			fmt.Printf("DHT discovery: %d verified exit(s) merged\n", len(dhtExits))
+		}
+	}
 
 	// Probe latency to each in-scope candidate; load comes from the directory.
 	load := make(map[string]int, len(nodes))
 	latency := make(map[string]int, len(nodes))
 	for _, nd := range nodes {
 		load[nd.PeerID] = nd.Load
-		if nd.PeerID == selfID || !nd.WantExit || nd.Region != region || !scope.Allows(tiers[nd.PeerID]) {
+		if nd.PeerID == selfID || !nd.WantExit || nd.Region != region || !scope.Allows(tierOf(nd.PeerID)) {
 			continue
 		}
 		ai, err := node.AddrInfoFromStrings(nd.PeerID, nd.Addrs)
@@ -683,8 +720,35 @@ func discoverExit(ctx context.Context, n *node.Node, c *coordinator.Client, regi
 	}
 	best := ranked[0]
 	fmt.Printf("selected exit %s in region %s (trust: %s, latency: %dms, load: %d)\n",
-		best.PeerID, best.Region, tiers[best.PeerID], latency[best.PeerID], load[best.PeerID])
+		best.PeerID, best.Region, tierOf(best.PeerID), latency[best.PeerID], load[best.PeerID])
 	return node.AddrInfoFromStrings(best.PeerID, best.Addrs)
+}
+
+// dhtDiscovery holds the state for Tier C decentralized discovery (opt-in via
+// -dht). EXPERIMENTAL: this wiring is compile- and unit-test-verified only; the
+// gater/relay/DHT/NAT interaction requires two networked machines to validate
+// end-to-end and has not been exercised on real infrastructure.
+type dhtDiscovery struct {
+	dht   *node.PrivateDHT
+	root  crypto.PubKey
+	epoch uint64
+	equiv *membership.EquivocationGuard
+}
+
+// resolveDHTExits resolves and verifies exits for a region on the private DHT and
+// returns the eligible ones as routing candidates.
+func resolveDHTExits(ctx context.Context, n *node.Node, dd *dhtDiscovery, region string) []routing.DHTExit {
+	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	verified := n.ResolveExits(rctx, dd.dht, string(membership.RoleExit), region, dd.epoch, dd.root, membership.VerifyOpts{}, nil, dd.equiv, 0, 16)
+	out := make([]routing.DHTExit, 0, len(verified))
+	for _, ve := range verified {
+		if !ve.Eligible {
+			continue
+		}
+		out = append(out, routing.DHTExit{PeerID: ve.Record.Subject, Region: ve.Record.Region, Addrs: ve.Record.Addrs})
+	}
+	return out
 }
 
 func registerOnce(c *coordinator.Client, selfID string, addrs []string, region string, wantExit bool, load int) {
@@ -815,4 +879,103 @@ func saveMemberCredential(path string, adm coordinator.JoinResult) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// loadMemberCredential reads a member credential chain previously saved by
+// saveMemberCredential.
+func loadMemberCredential(path string) (memberCert, issuerCert []byte, err error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	var doc struct {
+		MemberCert json.RawMessage `json:"memberCert"`
+		IssuerCert json.RawMessage `json:"issuerCert"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, nil, err
+	}
+	return doc.MemberCert, doc.IssuerCert, nil
+}
+
+// startDHTDiscovery sets up the EXPERIMENTAL Tier C private authenticated DHT: it
+// pins the root, presents this node's credential over member-auth, seeds the
+// member set from the coordinator directory, starts the DHT, and — when this node
+// is an exit — signs, serves, and advertises its own record. Returns nil (with a
+// warning) if prerequisites are missing. NOTE: unverified on real infrastructure.
+func startDHTDiscovery(ctx context.Context, n *node.Node, coord *coordinator.Client, rootKeyStr string, epoch uint64, region string, asExit bool, memberCert, issuerCert []byte, selfID string) *dhtDiscovery {
+	if rootKeyStr == "" {
+		fmt.Println("WARNING: -dht requires -root-key (the pinned offline root); Tier C discovery disabled")
+		return nil
+	}
+	root, err := discovery.DecodePublicKey(rootKeyStr)
+	if err != nil {
+		fmt.Printf("WARNING: bad -root-key: %v; Tier C discovery disabled\n", err)
+		return nil
+	}
+	if len(memberCert) == 0 || len(issuerCert) == 0 {
+		fmt.Println("WARNING: no member credential (join an issuer-configured coordinator or provide -member-cert); Tier C discovery disabled")
+		return nil
+	}
+	n.SetMemberCredential(memberCert, issuerCert)
+
+	// Seed the member set + DHT bootstrap peers from the coordinator directory —
+	// the set of peers the coordinator has admitted as members.
+	ms := node.NewMemberSet()
+	ms.Add(n.ID())
+	var bootstrap []peer.AddrInfo
+	if dirNodes, err := coord.Directory(); err == nil {
+		for _, dn := range dirNodes {
+			pid, err := peer.Decode(dn.PeerID)
+			if err != nil {
+				continue
+			}
+			ms.Add(pid)
+			if ai, err := node.AddrInfoFromStrings(dn.PeerID, dn.Addrs); err == nil {
+				bootstrap = append(bootstrap, ai)
+			}
+		}
+	}
+
+	pdht, err := n.StartPrivateDHT(ctx, ms, bootstrap)
+	if err != nil {
+		fmt.Printf("WARNING: start private DHT failed: %v; Tier C discovery disabled\n", err)
+		return nil
+	}
+	fmt.Printf("DHT: private discovery plane up (%d seeded members)\n", ms.Len())
+
+	if asExit {
+		// Advertise ourselves as an exit. Consumers verify our record against our
+		// member cert, so this only helps if that cert grants the exit role.
+		addrs := node.SafeDialAddrs(n.AddrStrings())
+		if rec, err := n.SignSelfRecord([]membership.Role{membership.RoleExit}, region, addrs, 10*time.Minute, uint64(time.Now().Unix())); err == nil {
+			n.SetNodeRecord(rec)
+			if err := pdht.Advertise(ctx, string(membership.RoleExit), region, epoch); err != nil {
+				fmt.Printf("WARNING: DHT advertise failed: %v\n", err)
+			} else {
+				fmt.Printf("DHT: advertising as exit in region %s (epoch %d)\n", region, epoch)
+			}
+			go readvertiseExit(ctx, n, pdht, region, epoch)
+		}
+	}
+	return &dhtDiscovery{dht: pdht, root: root, epoch: epoch, equiv: membership.NewEquivocationGuard(16)}
+}
+
+// readvertiseExit periodically re-signs (with a fresh generation) and re-advertises
+// this exit's record so it stays fresh on the DHT.
+func readvertiseExit(ctx context.Context, n *node.Node, pdht *node.PrivateDHT, region string, epoch uint64) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			addrs := node.SafeDialAddrs(n.AddrStrings())
+			if rec, err := n.SignSelfRecord([]membership.Role{membership.RoleExit}, region, addrs, 10*time.Minute, uint64(time.Now().Unix())); err == nil {
+				n.SetNodeRecord(rec)
+				_ = pdht.Advertise(ctx, string(membership.RoleExit), region, epoch)
+			}
+		}
+	}
 }

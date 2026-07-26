@@ -51,6 +51,17 @@ func (n *Node) SetNodeRecord(recordSigned []byte) {
 	n.h.SetStreamHandler(NodeRecordProtocol, n.handleNodeRecord)
 }
 
+// SignSelfRecord signs a node record advertising this node's own identity for
+// the given roles/region/addrs, valid for ttl, at the given generation.
+func (n *Node) SignSelfRecord(roles []membership.Role, region string, addrs []string, ttl time.Duration, generation uint64) ([]byte, error) {
+	priv := n.h.Peerstore().PrivKey(n.h.ID())
+	if priv == nil {
+		return nil, errors.New("noderecord: no identity key to sign with")
+	}
+	rec := membership.NodeRecord{V: 1, Subject: n.ID().String(), Roles: roles, Addrs: addrs, Region: region}
+	return membership.SignNodeRecord(priv, rec, time.Now(), time.Now().Add(ttl), generation)
+}
+
 func (n *Node) handleNodeRecord(s network.Stream) {
 	defer s.Close()
 	_ = s.SetDeadline(time.Now().Add(10 * time.Second))
