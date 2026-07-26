@@ -50,7 +50,7 @@ func TestNodeRecordRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignNodeRecord: %v", err)
 	}
-	got, err := VerifyNodeRecord(rootPub, subject, signed, memberCert, issuerCert, time.Now(), VerifyOpts{}, 0)
+	got, _, err := VerifyNodeRecord(rootPub, subject, signed, memberCert, issuerCert, time.Now(), VerifyOpts{}, 0)
 	if err != nil {
 		t.Fatalf("VerifyNodeRecord: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestNodeRecordRejectsRolledBackGeneration(t *testing.T) {
 	exitPriv, subject, rootPub, memberCert, issuerCert := exitFixture(t, []Role{RoleMember, RoleExit})
 	rec := NodeRecord{V: 1, Subject: subject, Roles: []Role{RoleExit}, Addrs: []string{"/ip4/1.2.3.4/tcp/4001"}, Region: "JP"}
 	signed, _ := SignNodeRecord(exitPriv, rec, time.Now(), time.Now().Add(5*time.Minute), 3)
-	if _, err := VerifyNodeRecord(rootPub, subject, signed, memberCert, issuerCert, time.Now(), VerifyOpts{}, 5); err == nil {
+	if _, _, err := VerifyNodeRecord(rootPub, subject, signed, memberCert, issuerCert, time.Now(), VerifyOpts{}, 5); err == nil {
 		t.Fatal("expected generation 3 below floor 5 to be rejected")
 	}
 }
@@ -76,7 +76,7 @@ func TestNodeRecordRejectsUnauthorizedRole(t *testing.T) {
 	exitPriv, subject, rootPub, memberCert, issuerCert := exitFixture(t, []Role{RoleMember}) // member only, no exit
 	rec := NodeRecord{V: 1, Subject: subject, Roles: []Role{RoleExit}, Addrs: []string{"/ip4/1.2.3.4/tcp/4001"}, Region: "JP"}
 	signed, _ := SignNodeRecord(exitPriv, rec, time.Now(), time.Now().Add(5*time.Minute), 1)
-	if _, err := VerifyNodeRecord(rootPub, subject, signed, memberCert, issuerCert, time.Now(), VerifyOpts{}, 0); err == nil {
+	if _, _, err := VerifyNodeRecord(rootPub, subject, signed, memberCert, issuerCert, time.Now(), VerifyOpts{}, 0); err == nil {
 		t.Fatal("expected a record advertising an unauthorized exit role to be rejected")
 	}
 }
@@ -87,7 +87,7 @@ func TestNodeRecordRejectsWrongSigner(t *testing.T) {
 	otherPriv, _, _ := crypto.GenerateEd25519Key(rand.Reader)
 	rec := NodeRecord{V: 1, Subject: subject, Roles: []Role{RoleExit}, Addrs: []string{"/ip4/1.2.3.4/tcp/4001"}, Region: "JP"}
 	signed, _ := SignNodeRecord(otherPriv, rec, time.Now(), time.Now().Add(5*time.Minute), 1) // signed by the wrong key
-	if _, err := VerifyNodeRecord(rootPub, subject, signed, memberCert, issuerCert, time.Now(), VerifyOpts{}, 0); err == nil {
+	if _, _, err := VerifyNodeRecord(rootPub, subject, signed, memberCert, issuerCert, time.Now(), VerifyOpts{}, 0); err == nil {
 		t.Fatal("expected a record not signed by the subject to be rejected")
 	}
 }

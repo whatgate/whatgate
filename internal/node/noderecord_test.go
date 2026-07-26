@@ -54,7 +54,7 @@ func TestFetchNodeRecordVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchNodeRecord: %v", err)
 	}
-	if got.Region != "JP" || got.Generation != 4 || len(got.Roles) != 1 || got.Roles[0] != membership.RoleExit {
+	if got.Record.Region != "JP" || got.Record.Generation != 4 || len(got.Record.Roles) != 1 || got.Record.Roles[0] != membership.RoleExit {
 		t.Fatalf("record = %+v", got)
 	}
 }
@@ -120,8 +120,8 @@ func TestFetchNodeRecordStripsUnsafeAddrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchNodeRecord: %v", err)
 	}
-	if len(got.Addrs) != 1 || got.Addrs[0] != "/ip4/1.2.3.4/tcp/443/ws" {
-		t.Fatalf("addrs = %v, want only the public one", got.Addrs)
+	if len(got.Record.Addrs) != 1 || got.Record.Addrs[0] != "/ip4/1.2.3.4/tcp/443/ws" {
+		t.Fatalf("addrs = %v, want only the public one", got.Record.Addrs)
 	}
 }
 

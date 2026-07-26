@@ -32,6 +32,14 @@ type nodeRecordResponse struct {
 	Sig        []byte          `json:"sig"` // signature over the challenge nonce by the responder's identity key
 }
 
+// FetchedRecord is a verified node record plus the cert that authorized it and
+// the raw signed record bytes (needed for equivocation fingerprinting).
+type FetchedRecord struct {
+	Record membership.NodeRecord
+	Cert   membership.Cert
+	Signed []byte
+}
+
 // SetNodeRecord stores this node's signed node record and registers the
 // record-fetch responder. The credential chain must already be set via
 // SetMemberCredential — it is presented alongside the record to prove the node's
@@ -71,50 +79,50 @@ func (n *Node) handleNodeRecord(s network.Stream) {
 // the record must be signed by p, name p as subject, advertise only authorized
 // roles, and carry a generation at/above genFloor. On success it returns the
 // verified record.
-func (n *Node) FetchNodeRecord(ctx context.Context, p peer.ID, pinnedRoot crypto.PubKey, opts membership.VerifyOpts, genFloor uint64) (membership.NodeRecord, error) {
+func (n *Node) FetchNodeRecord(ctx context.Context, p peer.ID, pinnedRoot crypto.PubKey, opts membership.VerifyOpts, genFloor uint64) (FetchedRecord, error) {
 	s, err := n.h.NewStream(ctx, p, NodeRecordProtocol)
 	if err != nil {
-		return membership.NodeRecord{}, fmt.Errorf("noderecord: open stream: %w", err)
+		return FetchedRecord{}, fmt.Errorf("noderecord: open stream: %w", err)
 	}
 	defer s.Close()
 	_ = s.SetDeadline(time.Now().Add(10 * time.Second))
 
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
-		return membership.NodeRecord{}, err
+		return FetchedRecord{}, err
 	}
 	if err := json.NewEncoder(s).Encode(memberAuthChallenge{Nonce: nonce}); err != nil {
-		return membership.NodeRecord{}, fmt.Errorf("noderecord: send challenge: %w", err)
+		return FetchedRecord{}, fmt.Errorf("noderecord: send challenge: %w", err)
 	}
 
 	var resp nodeRecordResponse
 	if err := json.NewDecoder(io.LimitReader(s, memberAuthMaxBytes)).Decode(&resp); err != nil {
-		return membership.NodeRecord{}, fmt.Errorf("noderecord: read response: %w", err)
+		return FetchedRecord{}, fmt.Errorf("noderecord: read response: %w", err)
 	}
 
 	// Liveness + key control: the nonce signature must verify under p's key.
 	pub, err := p.ExtractPublicKey()
 	if err != nil {
-		return membership.NodeRecord{}, fmt.Errorf("noderecord: extract peer key: %w", err)
+		return FetchedRecord{}, fmt.Errorf("noderecord: extract peer key: %w", err)
 	}
 	ok, err := pub.Verify(nonce, resp.Sig)
 	if err != nil {
-		return membership.NodeRecord{}, err
+		return FetchedRecord{}, err
 	}
 	if !ok {
-		return membership.NodeRecord{}, errors.New("noderecord: nonce signature does not verify")
+		return FetchedRecord{}, errors.New("noderecord: nonce signature does not verify")
 	}
 
-	rec, err := membership.VerifyNodeRecord(pinnedRoot, p.String(), resp.Record, resp.MemberCert, resp.IssuerCert, time.Now(), opts, genFloor)
+	rec, cert, err := membership.VerifyNodeRecord(pinnedRoot, p.String(), resp.Record, resp.MemberCert, resp.IssuerCert, time.Now(), opts, genFloor)
 	if err != nil {
-		return membership.NodeRecord{}, fmt.Errorf("noderecord: %w", err)
+		return FetchedRecord{}, fmt.Errorf("noderecord: %w", err)
 	}
 
 	// Drop any address that would steer a dial at private/loopback/metadata
 	// ranges (SSRF). A record left with no dial-safe address is unusable.
 	rec.Addrs = SafeDialAddrs(rec.Addrs)
 	if len(rec.Addrs) == 0 {
-		return membership.NodeRecord{}, errors.New("noderecord: no dial-safe addresses")
+		return FetchedRecord{}, errors.New("noderecord: no dial-safe addresses")
 	}
-	return rec, nil
+	return FetchedRecord{Record: rec, Cert: cert, Signed: append([]byte(nil), resp.Record...)}, nil
 }

@@ -53,42 +53,42 @@ func SignNodeRecord(nodePriv crypto.PrivKey, rec NodeRecord, issued, expires tim
 // subject's own key, unexpired, and at/above genFloor (anti-rollback); and the
 // roles it advertises must be a subset of what its cert grants. On success it
 // returns the record with Generation filled from the envelope.
-func VerifyNodeRecord(pinnedRoot crypto.PubKey, subject string, recordSigned, memberCert, issuerCert []byte, now time.Time, opts VerifyOpts, genFloor uint64) (NodeRecord, error) {
+func VerifyNodeRecord(pinnedRoot crypto.PubKey, subject string, recordSigned, memberCert, issuerCert []byte, now time.Time, opts VerifyOpts, genFloor uint64) (NodeRecord, Cert, error) {
 	// 1. The presenter's membership + authorized roles.
 	cert, err := VerifyMemberCert(pinnedRoot, subject, memberCert, issuerCert, now, opts)
 	if err != nil {
-		return NodeRecord{}, fmt.Errorf("node record: %w", err)
+		return NodeRecord{}, Cert{}, fmt.Errorf("node record: %w", err)
 	}
 
 	// 2. The record must be signed by the subject's own identity key.
 	subjID, err := peer.Decode(subject)
 	if err != nil {
-		return NodeRecord{}, fmt.Errorf("node record: bad subject: %w", err)
+		return NodeRecord{}, Cert{}, fmt.Errorf("node record: bad subject: %w", err)
 	}
 	subjPub, err := subjID.ExtractPublicKey()
 	if err != nil {
-		return NodeRecord{}, fmt.Errorf("node record: subject key: %w", err)
+		return NodeRecord{}, Cert{}, fmt.Errorf("node record: subject key: %w", err)
 	}
 	var env discovery.Signed
 	if err := json.Unmarshal(recordSigned, &env); err != nil {
-		return NodeRecord{}, fmt.Errorf("node record: not a signed envelope: %w", err)
+		return NodeRecord{}, Cert{}, fmt.Errorf("node record: not a signed envelope: %w", err)
 	}
 	payload, err := env.Verify(subjPub, discovery.TypeNodeRecord, now, genFloor)
 	if err != nil {
-		return NodeRecord{}, fmt.Errorf("node record: %w", err)
+		return NodeRecord{}, Cert{}, fmt.Errorf("node record: %w", err)
 	}
 	var rec NodeRecord
 	if err := json.Unmarshal(payload, &rec); err != nil {
-		return NodeRecord{}, fmt.Errorf("node record: bad payload: %w", err)
+		return NodeRecord{}, Cert{}, fmt.Errorf("node record: bad payload: %w", err)
 	}
 	rec.Generation = env.Serial
 
 	// 3. Bindings and authorization.
 	if rec.Subject != subject {
-		return NodeRecord{}, fmt.Errorf("node record: subject %q does not match %q", rec.Subject, subject)
+		return NodeRecord{}, Cert{}, fmt.Errorf("node record: subject %q does not match %q", rec.Subject, subject)
 	}
 	if !rolesSubsetOf(rec.Roles, cert.Roles) {
-		return NodeRecord{}, fmt.Errorf("node record: advertises roles %v beyond cert %v", rec.Roles, cert.Roles)
+		return NodeRecord{}, Cert{}, fmt.Errorf("node record: advertises roles %v beyond cert %v", rec.Roles, cert.Roles)
 	}
-	return rec, nil
+	return rec, cert, nil
 }
