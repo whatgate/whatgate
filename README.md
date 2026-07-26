@@ -84,16 +84,48 @@ node -coordinator https://a:8080,https://b:8080 -coordinator-key <协调器公�
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```
 
-> 🛡️ **抗封锁（A0/A1/A3/A4/C2）**：
+> 🛡️ **抗封锁（A0/A1/A3/A4/C2；C1 见下）**：
 > - **响应认证（A0）**：协调器 `-signing-key` 对**目录响应与中继地址**签名；节点 `-coordinator-key` 钉住其公钥后，**校验签名并拒绝**未签名/别的密钥签名/被回滚（旧序号）的目录与中继——协调器被 MITM 或换成恶意镜像也无法把你导向敌手出口或对手控制的中继。未钉公钥会告警。
 > - **多端点故障切换（A1）**：`-coordinator` 逗号分隔多个地址；某个被封（连不上）自动切下一个，"业务错误"（能连但拒）则如实上抛不误切。为真正独立，多个端点应跨不同故障域（ASN/DNS 商/CDN/运营者）。
 > - **本地目录缓存（A3）**：`-coordinator-cache`（需 `-coordinator-key`）把**已验签**的目录落盘（仅本人可读）；协调器全被封时用缓存续命，避免"一封就断"。缓存仍受签名/过期/回滚校验，过期即拒；用缓存时会打印告警。
 > - **TLS（`https://`）** 另外保护控制面**机密性**（问了哪些出口不外泄），与签名互补。
 >
 > - **端口伪装（A4）**：`-listen` 支持逗号分隔多地址；加 `/ip4/0.0.0.0/tcp/443/ws` 让数据面骑 **:443** 像 web 流量。这只是**粗筛级伪装**（非探测抗性）；要真像 HTTPS 需 `/tls/ws`+证书或 TLS 反代，多数住宅节点无公网入站则保持拨号-only 经中继。
-> - **带外引导自愈（C2）**：运营者 `coordinator -emit-bootstrap "https://a:8080,https://b:8080" -signing-key ...` 用钉扎密钥离线签一份端点清单（打印 JSON），托管到 CDN/GitHub raw 等**难封渠道**；节点 `-bootstrap-url <该地址>`（需 `-coordinator-key`）在**所有已知协调器都被封**、冷启动 join 失败时拉取该清单、**验签通过后切到新端点重试**——协调器整批被封也能自我修复。篡改的 CDN 无法投毒（信任只来自签名）；未钉公钥则拒绝（不认证清单本身是投毒面）。
+> - **带外引导自愈（C2）**：运营者 `coordinator -emit-bootstrap "https://a:8080,https://b:8080" -signing-key ...` 用钉扎密钥离线签一份端点清单（打印 JSON），托管到 CDN/GitHub raw 等**难封渠道**；节点 `-bootstrap-url <该地址>`（需 `-coordinator-key`）在**所有已知协调器都被封**时拉取该清单、**验签通过后切到新端点重试**——冷启动 join 与运行中目录获取**都会自愈**（返场节点亦然），协调器整批被封也能自我修复。篡改的 CDN 无法投毒（信任只来自签名）；未钉公钥则拒绝（不认证清单本身是投毒面）。
 >
 > 整体设计与分阶段路线图（含 Tier B 探测抗性、Tier C 去中心化发现）见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
+
+### 去中心化发现（Tier C1，🧪 实验性）
+
+当协调器（及其多端点/缓存/带外清单）**全部失效**时，节点还能经一张**私有认证 DHT**发现并连上出口——发现不再依赖任何单台服务器。信任锚是一把**离线根密钥**：它签发协调器用的"在线受限 issuer"，issuer 在准入时给成员发**成员证书**，出口在 DHT 上广告的记录都要回链到这把根才被采信。
+
+> ⚠️ **实验性**：`-dht` 路径仅经编译 + 单元测试 + 本地单机烟测验证；**门控/中继/DHT/NAT 打洞的真实交互、以及"断协调器仍能经 DHT 出网"需两台异网机器端到端验证**（与 TUN/跨 NAT 一致）。默认关闭，不影响常规使用。
+
+```bash
+# 1) 离线机（保管根密钥）：为协调器的在线 issuer 公钥签一张授权 {member} 的 issuer 证书。
+#    先在协调器机上 `coordinator -issuer-key ./issuer.key`（会打印 issuer 公钥），把它填到 -issuer-pubkey；
+#    stderr 打印的“根公钥”就是节点要钉的 -root-key。
+coordinator -emit-issuer-cert -root-key ./root.key \
+  -issuer-pubkey <issuer公钥> -issuer-roles member -issuer-id coord-issuer > issuer-cert.json
+
+# 2) 协调器（在线）：带上 issuer 私钥 + 上一步的根签证书；此后每次 join 都给成员发一张 {member} 证书。
+coordinator -addr :8080 -invite welcome -signing-key ./coordinator-signing.key \
+  -issuer-key ./issuer.key -issuer-cert ./issuer-cert.json
+
+# 3) 节点：钉住根公钥、开启 DHT。join 时领到成员证书（-member-cert 落盘）；
+#    协调器可达时走目录，全被封时也能经私有 DHT 发现已验证出口。
+node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> -invite welcome \
+  -dht -root-key <根公钥> -member-cert ./member.cred -to JP -socks 127.0.0.1:1080
+
+# 撤销：离线根签一份撤销 checkpoint（单调版本、带陈旧上限），经难封渠道分发。
+coordinator -emit-revocation -root-key ./root.key \
+  -revoke-subjects <被撤销PeerID> -revocation-version 2 > revocation.json
+```
+
+- **出口角色**须离线根/双签授权（在线 issuer 只能签 `{member}`，签不出 `{exit}`）：给某 issuer 加 `-issuer-roles member,exit` 才能签发出口证书，再据此让出口在 DHT 上广告。
+- 私有 DHT 上**非成员的记录一律不采信**（回链根验签 + 角色核对 + 反回滚 + SSRF 地址过滤 + equivocation 隔离）；DHT 发现的出口标为"陌生"，**保守信任范围下自动排除**（DHT 不提供"推荐"，那只来自协调器的权威声誉）。
+
+设计与对手驱动评审见 **[docs/c1-decentralized-discovery.md](docs/c1-decentralized-discovery.md)**。
 
 ### 本地状态面板
 
