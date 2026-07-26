@@ -29,6 +29,7 @@ import (
 // signed for one purpose can never be replayed as another (domain separation).
 const (
 	TypeDirectory  = "directory"
+	TypeRelay      = "relay"
 	TypeBootstrap  = "bootstrap"
 	TypeRevocation = "revocation"
 )

@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -111,16 +112,17 @@ func main() {
 		if len(endpoints) > 1 {
 			fmt.Printf("coordinator endpoints: %d (failover)\n", len(endpoints))
 		}
-		// Pin the coordinator's signing key so the directory it returns must be
-		// signed by that key — a reachable-but-rogue endpoint can't inject a
-		// poisoned directory. Distributed out of band (printed by the coordinator).
+		// Pin the coordinator's signing key so the directory AND relay it returns
+		// must be signed by that key — a reachable-but-rogue endpoint can't inject
+		// a poisoned directory or steer this node onto an adversary-controlled
+		// relay. Distributed out of band (printed by the coordinator).
 		if *coordKey != "" {
 			pub, err := discovery.DecodePublicKey(*coordKey)
 			if err != nil {
 				log.Fatalf("bad -coordinator-key: %v", err)
 			}
 			coord.SetPinnedKey(pub)
-			fmt.Println("coordinator key: pinned (directory responses are verified)")
+			fmt.Println("coordinator key: pinned (directory and relay responses are verified)")
 			// The cache only holds verified (pinned) directories, so it is only
 			// meaningful alongside a pinned key.
 			if *coordCache != "" {
@@ -142,12 +144,21 @@ func main() {
 			}
 		}
 		// Configure the coordinator's relay as a fallback path, if it advertises
-		// one, so this node stays reachable when hole punching fails.
-		if info, err := coord.Relay(); err == nil {
+		// one, so this node stays reachable when hole punching fails. With a pinned
+		// key the relay is signature-verified; a verification failure surfaces
+		// (possible MITM) rather than silently dropping the fallback, while a plain
+		// "no relay configured" stays quiet.
+		info, err := coord.Relay()
+		switch {
+		case err == nil:
 			if ai, err := node.AddrInfoFromStrings(info.PeerID, info.Addrs); err == nil {
 				nodeOpts = append(nodeOpts, node.WithStaticRelays(ai))
 				fmt.Printf("relay fallback: %s\n", ai.ID)
 			}
+		case errors.Is(err, coordinator.ErrNoRelay):
+			// coordinator advertises no relay — nothing to do
+		default:
+			fmt.Printf("WARNING: coordinator relay not configured (%v); if a key is pinned this may indicate tampering\n", err)
 		}
 	}
 

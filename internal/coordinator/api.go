@@ -131,9 +131,10 @@ type Server struct {
 	sigMu    sync.Mutex
 	seenSigs map[string]time.Time // signature -> expiry, for replay rejection
 
-	signMu    sync.Mutex
-	signKey   crypto.PrivKey // if set, discovery responses are signed
-	dirSerial uint64         // monotonic serial for signed directories
+	signMu      sync.Mutex
+	signKey     crypto.PrivKey // if set, discovery responses are signed
+	dirSerial   uint64         // monotonic serial for signed directories
+	relaySerial uint64         // monotonic serial for signed relay advertisements
 }
 
 // SetSigningKey configures the control-plane key used to sign discovery
@@ -167,6 +168,30 @@ func (s *Server) signDirectory(payload []byte) (discovery.Signed, bool) {
 		// A configured-but-failing signer is a server misconfiguration; log and
 		// fall back to unsigned rather than serving nothing.
 		log.Printf("[coordinator] sign directory: %v", err)
+		return discovery.Signed{}, false
+	}
+	return obj, true
+}
+
+// signRelay wraps payload (a marshaled RelayInfo) in a signed envelope with the
+// next monotonic relay serial. Mirrors signDirectory so a pinned node can reject
+// a forged relay address. Returns ok=false when no signing key is configured.
+func (s *Server) signRelay(payload []byte) (discovery.Signed, bool) {
+	s.signMu.Lock()
+	defer s.signMu.Unlock()
+	if s.signKey == nil {
+		return discovery.Signed{}, false
+	}
+	s.relaySerial++
+	now := s.now()
+	obj, err := discovery.Sign(s.signKey, discovery.Meta{
+		Type:      discovery.TypeRelay,
+		Serial:    s.relaySerial,
+		IssuedAt:  now,
+		ExpiresAt: now.Add(directorySignatureTTL),
+	}, payload)
+	if err != nil {
+		log.Printf("[coordinator] sign relay: %v", err)
 		return discovery.Signed{}, false
 	}
 	return obj, true
@@ -464,7 +489,19 @@ func (s *Server) handleRelay(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no relay configured", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, *s.relay)
+	// When a signing key is configured, wrap the relay info in a signed envelope
+	// so a pinned node can reject a forged relay address; otherwise serve the
+	// legacy bare object.
+	payload, err := json.Marshal(*s.relay)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if obj, ok := s.signRelay(payload); ok {
+		writeJSON(w, http.StatusOK, obj)
+		return
+	}
+	writeJSON(w, http.StatusOK, json.RawMessage(payload))
 }
 
 // handleJoin admits a peer by redeeming an invite code.

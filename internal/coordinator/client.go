@@ -38,11 +38,12 @@ type Client struct {
 	// responses must be signed by. A pinned client verifies every directory and
 	// refuses any that is unsigned or signed by a different key — so a
 	// reachable-but-rogue endpoint cannot inject a poisoned directory.
-	pinnedKey crypto.PubKey
-	dirMu     sync.Mutex
-	dirFloor  uint64 // highest directory serial accepted so far (anti-rollback)
-	cachePath string // if set (and pinned), the last verified directory is cached here
-	stale     bool   // whether the last DirectoryFor result came from the cache
+	pinnedKey  crypto.PubKey
+	dirMu      sync.Mutex
+	dirFloor   uint64 // highest directory serial accepted so far (anti-rollback)
+	relayFloor uint64 // highest relay serial accepted so far (anti-rollback)
+	cachePath  string // if set (and pinned), the last verified directory is cached here
+	stale      bool   // whether the last DirectoryFor result came from the cache
 }
 
 // SetDirectoryCache enables persisting the last verified directory to path
@@ -417,11 +418,55 @@ func (c *Client) Relay() (RelayInfo, error) {
 	if resp.StatusCode != http.StatusOK {
 		return RelayInfo{}, statusError("GET /relay", resp)
 	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return RelayInfo{}, err
+	}
+
+	// A pinned client requires a verified, non-rolled-back signed envelope and
+	// uses its payload as the relay info; an unpinned client reads the bare
+	// object. This is the relay analogue of the directory's A0 verification: a
+	// rogue mirror / MITM coordinator cannot steer a pinned node onto an
+	// adversary-controlled relay, nor strip the signature to downgrade it.
+	infoJSON := body
+	if c.pinnedKey != nil {
+		payload, err := c.verifyRelay(body)
+		if err != nil {
+			return RelayInfo{}, err
+		}
+		infoJSON = payload
+	}
+
 	var info RelayInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.Unmarshal(infoJSON, &info); err != nil {
 		return RelayInfo{}, err
 	}
 	return info, nil
+}
+
+// verifyRelay checks a signed relay envelope against the pinned key and the
+// client's relay rollback floor, advancing the floor on success and returning
+// the verified RelayInfo payload.
+func (c *Client) verifyRelay(body []byte) ([]byte, error) {
+	var signed discovery.Signed
+	if err := json.Unmarshal(body, &signed); err != nil {
+		return nil, fmt.Errorf("relay: not a signed envelope: %w", err)
+	}
+	c.dirMu.Lock()
+	floor := c.relayFloor
+	c.dirMu.Unlock()
+
+	payload, err := signed.Verify(c.pinnedKey, discovery.TypeRelay, time.Now(), floor)
+	if err != nil {
+		return nil, fmt.Errorf("relay: %w", err)
+	}
+
+	c.dirMu.Lock()
+	if signed.Serial > c.relayFloor {
+		c.relayFloor = signed.Serial
+	}
+	c.dirMu.Unlock()
+	return payload, nil
 }
 
 // postJSON POSTs body as JSON to path and, if out is non-nil, decodes the
