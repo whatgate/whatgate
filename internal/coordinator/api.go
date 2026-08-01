@@ -1,6 +1,8 @@
 package coordinator
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,6 +117,16 @@ type groupsResponse struct {
 	Groups []string `json:"groups"`
 }
 
+type createInviteRequest struct {
+	MaxUses int              `json:"maxUses"`
+	Auth    authn.SignedAuth `json:"auth"`
+}
+
+type createInviteResponse struct {
+	Code    string `json:"code"`
+	MaxUses int    `json:"maxUses"`
+}
+
 // RelayInfo advertises the coordinator's co-located Circuit Relay so nodes can
 // configure it as a fallback path.
 type RelayInfo struct {
@@ -154,6 +166,8 @@ type Server struct {
 	issuerCert   []byte         // the root-signed issuer cert authorizing issuerKey
 	issuerID     string         // issuer identifier bound into issued member certs
 	memberSerial uint64         // monotonic serial for issued member certs
+
+	allowFirstMemberBootstrap bool
 }
 
 // memberCertTTL bounds how long an auto-issued member cert stays valid. Member
@@ -272,6 +286,13 @@ func NewServer(dir *Directory, invites *InviteStore) *Server {
 		groupSecrets: make(map[string]string),
 		seenSigs:     make(map[string]time.Time),
 	}
+}
+
+// SetFirstMemberBootstrap allows one authenticated peer to become the founder
+// when the admission store is empty. The store closes this path atomically as
+// soon as the first member is admitted.
+func (s *Server) SetFirstMemberBootstrap(enabled bool) {
+	s.allowFirstMemberBootstrap = enabled
 }
 
 // Reputation exposes the coordinator's reputation store.
@@ -490,6 +511,7 @@ func hostOf(remoteAddr string) string {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/join", s.rateLimited(s.handleJoin))
+	mux.HandleFunc("/invite/create", s.rateLimited(s.handleCreateInvite))
 	mux.HandleFunc("/register", s.rateLimited(s.handleRegister))
 	mux.HandleFunc("/directory", s.handleDirectory)
 	mux.HandleFunc("/relay", s.handleRelay)
@@ -500,6 +522,49 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/reputation", s.handleReputation)
 	mux.HandleFunc("/groups", s.handleGroups)
 	return mux
+}
+
+// handleCreateInvite lets an admitted member mint a random, bounded-use invite.
+// The request is identity-signed and the server generates the credential so a
+// caller cannot force weak or predictable invite codes.
+func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req createInviteRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.MaxUses < 1 || req.MaxUses > 1000 {
+		http.Error(w, "maxUses must be between 1 and 1000", http.StatusBadRequest)
+		return
+	}
+	action := fmt.Sprintf("invite/create:%d", req.MaxUses)
+	if err := s.checkAuth(req.Auth, action, req.Auth.PeerID); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if _, admitted := s.invites.AdmissionOf(req.Auth.PeerID); !admitted {
+		http.Error(w, "only admitted members may create invites", http.StatusForbidden)
+		return
+	}
+
+	var code string
+	for {
+		raw := make([]byte, 18)
+		if _, err := rand.Read(raw); err != nil {
+			http.Error(w, "could not generate invite", http.StatusInternalServerError)
+			return
+		}
+		code = base64.RawURLEncoding.EncodeToString(raw)
+		if !s.invites.Exists(code) {
+			break
+		}
+	}
+	s.invites.Create(code, req.Auth.PeerID, req.MaxUses)
+	s.save()
+	writeJSON(w, http.StatusOK, createInviteResponse{Code: code, MaxUses: req.MaxUses})
 }
 
 // handleGroups returns the groups a peer belongs to.
@@ -696,12 +761,21 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issuer, err := s.invites.Redeem(req.Code, req.PeerID)
+	var issuer string
+	var err error
+	if req.Code == "" && s.allowFirstMemberBootstrap {
+		issuer, err = s.invites.Bootstrap(req.PeerID)
+	} else {
+		issuer, err = s.invites.Redeem(req.Code, req.PeerID)
+	}
 	switch {
 	case errors.Is(err, ErrUnknownInvite):
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	case errors.Is(err, ErrInviteExhausted):
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	case errors.Is(err, ErrBootstrapClosed):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case err != nil:

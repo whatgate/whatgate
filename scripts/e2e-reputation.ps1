@@ -15,7 +15,7 @@ $bin  = Join-Path (Split-Path -Parent $PSScriptRoot) 'bin'
 $logs = Join-Path $env:TEMP 'whatgate-e2e'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
 
-Get-Process node,coordinator -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+Get-Process whatgate,coordinator -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 Start-Sleep -Milliseconds 400
 
 function Wait-ForLine($path,$pattern,$timeoutSec){
@@ -33,12 +33,12 @@ try{
     $p=Start-Process "$bin\coordinator.exe" -ArgumentList '-addr','127.0.0.1:8097','-invite','welcome' -RedirectStandardOutput "$logs\rep-co.out" -RedirectStandardError "$logs\rep-co.err" -WindowStyle Hidden -PassThru; $procs+=$p
     if(-not (Wait-ForLine "$logs\rep-co.out" 'coordinator listening' 10)){ throw "coordinator not up" }
 
-    $e=Start-Process "$bin\node.exe" -ArgumentList '-listen','/ip4/127.0.0.1/tcp/45770','-coordinator','http://127.0.0.1:8097','-invite','welcome','-exit','-region','JP','-block-domains','api.ipify.org','-min-reputation','0' -RedirectStandardOutput "$logs\rep-e.out" -RedirectStandardError "$logs\rep-e.err" -WindowStyle Hidden -PassThru; $procs+=$e
+    $e=Start-Process "$bin\whatgate.exe" -ArgumentList '-listen','/ip4/127.0.0.1/tcp/45770','-coordinator','http://127.0.0.1:8097','-invite','welcome','-exit','-region','JP','-block-domains','api.ipify.org','-min-reputation','0' -RedirectStandardOutput "$logs\rep-e.out" -RedirectStandardError "$logs\rep-e.err" -WindowStyle Hidden -PassThru; $procs+=$e
     if(-not (Wait-ForLine "$logs\rep-e.out" 'exit: ENABLED' 15)){ throw "exit not ready" }
     Start-Sleep -Seconds 2
 
-    $c1=Start-Process "$bin\node.exe" -ArgumentList '-listen','/ip4/127.0.0.1/tcp/45771','-coordinator','http://127.0.0.1:8097','-invite','welcome','-to','JP','-trust-scope','open','-socks','127.0.0.1:1086' -RedirectStandardOutput "$logs\rep-c1.out" -RedirectStandardError "$logs\rep-c1.err" -WindowStyle Hidden -PassThru; $procs+=$c1
-    $c2=Start-Process "$bin\node.exe" -ArgumentList '-listen','/ip4/127.0.0.1/tcp/45772','-coordinator','http://127.0.0.1:8097','-invite','welcome','-to','JP','-trust-scope','open','-socks','127.0.0.1:1087' -RedirectStandardOutput "$logs\rep-c2.out" -RedirectStandardError "$logs\rep-c2.err" -WindowStyle Hidden -PassThru; $procs+=$c2
+    $c1=Start-Process "$bin\whatgate.exe" -ArgumentList '-listen','/ip4/127.0.0.1/tcp/45771','-coordinator','http://127.0.0.1:8097','-invite','welcome','-to','JP','-trust-scope','open','-socks','127.0.0.1:1086' -RedirectStandardOutput "$logs\rep-c1.out" -RedirectStandardError "$logs\rep-c1.err" -WindowStyle Hidden -PassThru; $procs+=$c1
+    $c2=Start-Process "$bin\whatgate.exe" -ArgumentList '-listen','/ip4/127.0.0.1/tcp/45772','-coordinator','http://127.0.0.1:8097','-invite','welcome','-to','JP','-trust-scope','open','-socks','127.0.0.1:1087' -RedirectStandardOutput "$logs\rep-c2.out" -RedirectStandardError "$logs\rep-c2.err" -WindowStyle Hidden -PassThru; $procs+=$c2
     if(-not (Wait-ForLine "$logs\rep-c1.out" 'SOCKS5 proxy on' 15)){ throw "client1 not ready" }
     if(-not (Wait-ForLine "$logs\rep-c2.out" 'SOCKS5 proxy on' 15)){ throw "client2 not ready" }
     $id1=((Select-String -Path "$logs\rep-c1.out" -Pattern 'peer id: (\S+)').Matches.Groups[1].Value)

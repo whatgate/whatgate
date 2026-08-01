@@ -11,7 +11,7 @@
 go build -o bin/ ./...
 ```
 
-产出 `bin/coordinator` 与 `bin/node`（Windows 为 `.exe`）。下文命令用 `./bin/node`；Windows 用 `bin\node.exe`。
+产出 `bin/coordinator` 与 `bin/whatgate`（Windows 为 `.exe`）。下文命令用 `./bin/whatgate`；Windows 用 `bin\whatgate.exe`。
 
 ## 1. 单元测试
 
@@ -51,10 +51,10 @@ go test ./internal/trust/ -v
 
 ```bash
 # 终端 1：出口节点。复制它打印的某个 /p2p/ 多地址
-./bin/node -exit
+./bin/whatgate -exit
 
 # 终端 2：客户端，经该出口建隧道
-./bin/node -connect <出口多地址> -socks 127.0.0.1:1080
+./bin/whatgate -connect <出口多地址> -socks 127.0.0.1:1080
 
 # 终端 3：验证
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
@@ -67,10 +67,10 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ./bin/coordinator -addr :8080 -invite welcome
 
 # 终端 2：出口，加入并注册为 JP 区出口
-./bin/node -coordinator http://127.0.0.1:8080 -invite welcome -exit -region JP
+./bin/whatgate -coordinator http://127.0.0.1:8080 -invite welcome -exit -region JP
 
 # 终端 3：客户端，按地区自动发现出口
-./bin/node -coordinator http://127.0.0.1:8080 -invite welcome \
+./bin/whatgate -coordinator http://127.0.0.1:8080 -invite welcome \
            -to JP -trust-scope open -socks 127.0.0.1:1080
 
 # 终端 4：验证
@@ -91,9 +91,9 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 
 ```bash
 # 出口（首个加入 fam 者设口令）
-./bin/node -coordinator http://127.0.0.1:8080 -invite welcome -exit -region JP -group fam -group-secret famkey
+./bin/whatgate -coordinator http://127.0.0.1:8080 -invite welcome -exit -region JP -group fam -group-secret famkey
 # 客户端（保守，但用同一口令同属 fam）
-./bin/node -coordinator http://127.0.0.1:8080 -invite welcome -to JP -trust-scope conservative -group fam -group-secret famkey -socks 127.0.0.1:1080
+./bin/whatgate -coordinator http://127.0.0.1:8080 -invite welcome -to JP -trust-scope conservative -group fam -group-secret famkey -socks 127.0.0.1:1080
 ```
 
 ### 2.4 出口保护 ExitGuard（M5）
@@ -102,7 +102,7 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 
 ```bash
 # 出口：只服务信任圈内、封禁某域名、限并发
-./bin/node -coordinator http://127.0.0.1:8080 -invite welcome -exit -region JP \
+./bin/whatgate -coordinator http://127.0.0.1:8080 -invite welcome -exit -region JP \
            -exit-scope conservative -block-domains api.ipify.org -max-conns 50
 ```
 
@@ -130,12 +130,12 @@ pwsh scripts/e2e-exit-guard.ps1
 pwsh scripts/e2e-reputation.ps1
 ```
 
-脚本会在开头杀掉遗留的 `node`/`coordinator` 进程，并用回环端口跑完整流程，最后打印 `OVERALL: SUCCESS`。需先 `go build -o bin/ ./...`。
+脚本会在开头杀掉遗留的 `whatgate`/`coordinator` 进程，并用回环端口跑完整流程，最后打印 `OVERALL: SUCCESS`。需先 `go build -o bin/ ./...`。
 
 ## 4. TUN 全局模式（M6，需管理员）
 
 ```bash
-go build -tags tun -o bin/node-tun ./cmd/node
+go build -tags tun -o bin/whatgate-tun ./cmd/whatgate
 ```
 
 运行需管理员/root 权限、Windows 需 `wintun.dll`，并手动配置路由（含把出口/协调器连接排除出 TUN，避免回环）。详细步骤见 [tun-and-mobile.md](tun-and-mobile.md)。**不要在生产/日常机器上随意开启**——它会接管整机流量。
@@ -144,7 +144,7 @@ go build -tags tun -o bin/node-tun ./cmd/node
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 客户端选中一个"莫名的"出口 | 有**遗留进程**没退干净、污染了目录。先 `Get-Process node,coordinator \| Stop-Process -Force`（Windows）或 `pkill -f 'bin/node'`（*nix） |
+| 客户端选中一个"莫名的"出口 | 有**遗留进程**没退干净、污染了目录。先 `Get-Process whatgate,coordinator \| Stop-Process -Force`（Windows）或 `pkill -f 'bin/whatgate'`（*nix） |
 | 协调器打印了 listening 却连不上 | 端口被占。coordinator 的 "listening" 打印在真正 bind 之前——先确认端口空闲、无残留协调器 |
 | `curl` 经隧道返回空 | 可能是 ExitGuard 拒绝（预期行为），或出口没在跑；看客户端/出口日志 |
 | 换机器后隧道 IP 仍相同 | 两端在同一网络/机器。真实解锁需出口在不同地区的机器 |

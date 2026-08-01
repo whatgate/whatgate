@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=WhatGate
+Comment=安全、简单地连接 WhatGate 网络
+Exec=__EXEC__
+Terminal=false
+Categories=Network;
+StartupNotify=true

@@ -168,6 +168,23 @@ func (c *Client) Join(code, peerID string) (JoinResult, error) {
 	return JoinResult{Issuer: resp.Issuer, MemberCert: resp.MemberCert, IssuerCert: resp.IssuerCert}, nil
 }
 
+// CreateInvite asks the coordinator to mint a random invite attributed to the
+// authenticated, already-admitted caller.
+func (c *Client) CreateInvite(maxUses int) (string, error) {
+	auth, err := c.sign(fmt.Sprintf("invite/create:%d", maxUses))
+	if err != nil {
+		return "", err
+	}
+	var resp createInviteResponse
+	if err := c.postJSON("/invite/create", createInviteRequest{
+		MaxUses: maxUses,
+		Auth:    auth,
+	}, &resp); err != nil {
+		return "", err
+	}
+	return resp.Code, nil
+}
+
 // Register advertises the node's presence in the directory.
 func (c *Client) Register(info NodeInfo) error {
 	auth, err := c.sign("register")

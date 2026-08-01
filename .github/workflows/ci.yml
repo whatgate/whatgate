@@ -35,4 +35,16 @@ jobs:
         run: go test ./... -timeout 120s
 
       - name: build (tun tag)
-        run: go build -tags tun ./cmd/node
+        run: go build -tags tun ./cmd/whatgate
+
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: build desktop client
+        run: dotnet build desktop/WhatGate.Desktop/WhatGate.Desktop.csproj --configuration Release

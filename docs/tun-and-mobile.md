@@ -28,7 +28,7 @@ flowchart LR
 go build -o bin/ ./...
 
 # 含 TUN 支持（拉 gvisor/tun2socks，二进制更大）
-go build -tags tun -o bin/node-tun ./cmd/node
+go build -tags tun -o bin/whatgate-tun ./cmd/whatgate
 ```
 
 ### 运行（需管理员/root）
@@ -37,7 +37,7 @@ go build -tags tun -o bin/node-tun ./cmd/node
 
 ```bash
 # 例：经协调器发现 JP 出口，同时开全局 TUN + 自动路由
-sudo ./node-tun -coordinator http://host:8080 -invite welcome \
+sudo ./whatgate-tun -coordinator http://host:8080 -invite welcome \
      -to JP -trust-scope open -socks 127.0.0.1:1080 \
      -tun -tun-device whatgate0 -tun-auto-route
 ```

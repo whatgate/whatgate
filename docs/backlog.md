@@ -23,7 +23,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 |---|---|---|
 | P1 | ~~**连接留痕持久化（可追溯审计）**~~ ✅ **已完成** | 出口 `-audit-log` 把"时间/谁/连了什么/结果(served/denied+原因)"以 JSON Lines 追加落盘（`internal/audit`），配合邀请链做事后追责。 |
 | P1 | ~~**威胁情报域名源**~~ ✅ **已完成** | 出口 `-threat-feed`(url/文件, hosts 或纯域名格式)启动拉取并入黑名单、定期刷新(`internal/threatfeed`)。 |
-| P2 | ~~**带宽级限额与熔断**~~ ✅ **已完成** | 出口按请求方**字节速率令牌桶**（`internal/bandwidth`）限吞吐：超预算即**熔断**——`tunnel` 计量钩子切断当前传输、`ErrBandwidthExceeded` 拒绝其新连接、并经 `Report(OutcomeBlocked)` 下调其声誉；字节预算随时间自动回补恢复（切断时长与超量成正比）。node `-requester-bandwidth`/`-requester-bandwidth-burst`（默认禁用）；埋点 `exit_bandwidth-tripped` + `exit_denied:bandwidth`。TCP 与 UDP 出口共用同一字节预算（UDP 双向计量、超限拆隧道）。 |
+| P2 | ~~**带宽级限额与熔断**~~ ✅ **已完成** | 出口按请求方**字节速率令牌桶**（`internal/bandwidth`）限吞吐：超预算即**熔断**——`tunnel` 计量钩子切断当前传输、`ErrBandwidthExceeded` 拒绝其新连接、并经 `Report(OutcomeBlocked)` 下调其声誉；字节预算随时间自动回补恢复（切断时长与超量成正比）。whatgate `-requester-bandwidth`/`-requester-bandwidth-burst`（默认禁用）；埋点 `exit_bandwidth-tripped` + `exit_denied:bandwidth`。TCP 与 UDP 出口共用同一字节预算（UDP 双向计量、超限拆隧道）。 |
 | P2 | ~~**按请求方限速**~~ ✅ **已完成** | 出口 ExitGuard 双重限单请求方：并发上限（`MaxConnsPerRequester`，`-max-conns-per-requester`）+ 建连速率令牌桶（`RequesterRatePerSec`/`RequesterBurst`，`-requester-rate`/`-requester-burst`，复用 `internal/ratelimit`），后者挡住快开快关、绕过并发上限的 churn 型滥用（超限 `ErrRequesterRateLimited`）。默认全禁用。 |
 
 ## C. 组网 / 协调 / 中继
@@ -40,7 +40,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 | 优先级 | 项 | 说明 |
 |---|---|---|
 | P1 | ~~**UDP 支持**~~ ✅ **已完成** | SOCKS5 UDP ASSOCIATE + libp2p UDP 数据报隧道（`pkg/protocol` 帧、`node` UDPSession/出口转发、`proxy` UDP 中继），DNS-over-UDP 真实出网验证。UDP 出口已接 ExitGuard（与 TCP 共用授权：信任范围/声誉/端口/域名/并发）。 |
-| P2 | ~~**选路精细化**~~ ✅ **已完成** | **可配加权综合评分 ✅**：`routing.RankExitsWeighted`（`Weights{Trust,Latency,Load}`，综合分排序 + 字典序 tie-break，仍按 scope 过滤）；node `-rank-{trust,latency,load}-weight`（任一非零启用，默认字典序不变）。**延迟 EWMA 平滑 ✅**：`routing.LatencyTracker` 跨重发现轮对每出口 RTT 做指数加权移动平均，单个慢探针被阻尼不再抖动选路；node `-latency-ewma-alpha`（默认 0.3，置 1 关闭平滑=旧行为）；不可达轮用哨兵排末但不污染平滑历史，恢复即回。 |
+| P2 | ~~**选路精细化**~~ ✅ **已完成** | **可配加权综合评分 ✅**：`routing.RankExitsWeighted`（`Weights{Trust,Latency,Load}`，综合分排序 + 字典序 tie-break，仍按 scope 过滤）；whatgate `-rank-{trust,latency,load}-weight`（任一非零启用，默认字典序不变）。**延迟 EWMA 平滑 ✅**：`routing.LatencyTracker` 跨重发现轮对每出口 RTT 做指数加权移动平均，单个慢探针被阻尼不再抖动选路；whatgate `-latency-ewma-alpha`（默认 0.3，置 1 关闭平滑=旧行为）；不可达轮用哨兵排末但不污染平滑历史，恢复即回。 |
 | P2 | ~~**DNS 策略**~~ ✅ **已完成** | 明确解析模型（隧道端到端传 `host:port`，主机名在出口侧解析——SOCKS5 `atypDomain` 原样透传不本地解析）；出口可配可信解析器 `-dns-server`（`internal/dnsx`，隔离本地 DNS 投毒/审查，`:53` 默认、IPv6 自动加括号），解析仍在出口侧；文档 [dns.md](dns.md) 讲清客户端如何避免泄漏（`--socks5-hostname`/浏览器远端 DNS）与诚实边界（UDP 主机名/TUN 分流）。 |
 
 ## E. TUN 全局模式（桌面）
@@ -67,7 +67,7 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 |---|---|---|
 | P1 | **桌面外壳** | 本地 Web 控制台：状态面板 ✅ + 切换出口地区 ✅ + 开关出口 ✅ + 首启动信任向导 ✅ + **小网管理**（加入/创建/背书/我的小网列表）✅。**剩：系统托盘**（原生集成，可选）。 |
 | P1 | **图形化首启动信任向导** | 解释"成为出口/用陌生出口"的风险，让用户选信任范围档位（CLI 现以 `-trust-scope` 无默认体现）。 |
-| P2 | ~~**配置文件支持**~~ ✅ **已完成** | node/coordinator `-config <file.json>`：键即 flag 名，命令行覆盖文件（优先级 命令行 > 文件 > 默认），未知键报错防拼写。通用实现（`internal/config.ApplyFile` 用 `flag.Visit` 判显式设置，无需逐 flag 接线）；JSON 而非 YAML 以零新增依赖（合分发简易性 + 复用 `internal/persist` 约定）。 |
+| P2 | ~~**配置文件支持**~~ ✅ **已完成** | whatgate/coordinator `-config <file.json>`：键即 flag 名，命令行覆盖文件（优先级 命令行 > 文件 > 默认），未知键报错防拼写。通用实现（`internal/config.ApplyFile` 用 `flag.Visit` 判显式设置，无需逐 flag 接线）；JSON 而非 YAML 以零新增依赖（合分发简易性 + 复用 `internal/persist` 约定）。 |
 | P2 | **小网管理 UX** | 退组、移除成员、撤销背书等操作与界面。 |
 
 ## H. 工程 / 发布 / 运维
@@ -75,9 +75,9 @@ M1–M6 的核心链路已完成（见 [architecture.md](architecture.md) 路线
 | 优先级 | 项 | 说明 |
 |---|---|---|
 | P1 | ~~**CI**~~ ✅ **已完成** | `.github/workflows/ci.yml`：push/PR 自动 `gofmt`/`vet`/`test`/默认构建 + `-tags tun` 构建。 |
-| P1 | ~~**交叉编译与发布**~~ ✅ **已完成（代码签名待做）** | `scripts/build-release.sh` 一键交叉编译六平台（Win/mac/Linux × amd64/arm64）的 coordinator/node/node-tun，打包 + SHA256SUMS；`.github/workflows/release.yml` 在推 `v*` tag 时自动构建并 `gh release create`。二进制经 `-ldflags -X main.version` 版本戳（`-version` 可查）。**剩：代码签名/公证**（Windows Authenticode、macOS notarization）。 |
+| P1 | ~~**交叉编译与发布**~~ ✅ **已完成（代码签名待做）** | `scripts/build-release.sh` 一键交叉编译六平台（Win/mac/Linux × amd64/arm64）的 coordinator/whatgate/whatgate-tun，打包 + SHA256SUMS；`.github/workflows/release.yml` 在推 `v*` tag 时自动构建并 `gh release create`。二进制经 `-ldflags -X main.version` 版本戳（`-version` 可查）。**剩：代码签名/公证**（Windows Authenticode、macOS notarization）。 |
 | P1 | **安全评审** | 对隧道、协调协议、ExitGuard 做一次专门的安全审查。 |
-| P2 | ~~**可观测性**~~ ✅ **已完成** | **指标 ✅**：`internal/metrics` 零依赖计数器注册表（`Inc`/`Add`/`Snapshot`，`flat name→count`），node `-metrics-addr` 以 JSON 暴露 `/metrics`；出口经 `GuardedExit.Metrics` 钩子记 `exit_served` 与按原因分类的 `exit_denied:<reason>`（untrusted/low-reputation/blocked-port/blocked-domain/blocked-private/too-many-conns/too-many-requester-conns/requester-rate/bandwidth）+ `exit_bandwidth-tripped`。**结构化日志 ✅**：`internal/logging`（stdlib `log/slog` 封装，零依赖），node/coordinator `-log-format text\|json`（json 每行一对象供采集器解析/聚合）；协调器运营/安全事件（签名/发证/中继/限流/Sybil/衰减/监听/TLS）与 node 运营诊断均结构化（`-emit-*` 机器产物仍走 stdout 不受影响）。 |
+| P2 | ~~**可观测性**~~ ✅ **已完成** | **指标 ✅**：`internal/metrics` 零依赖计数器注册表（`Inc`/`Add`/`Snapshot`，`flat name→count`），whatgate `-metrics-addr` 以 JSON 暴露 `/metrics`；出口经 `GuardedExit.Metrics` 钩子记 `exit_served` 与按原因分类的 `exit_denied:<reason>`（untrusted/low-reputation/blocked-port/blocked-domain/blocked-private/too-many-conns/too-many-requester-conns/requester-rate/bandwidth）+ `exit_bandwidth-tripped`。**结构化日志 ✅**：`internal/logging`（stdlib `log/slog` 封装，零依赖），whatgate/coordinator `-log-format text\|json`（json 每行一对象供采集器解析/聚合）；协调器运营/安全事件（签名/发证/中继/限流/Sybil/衰减/监听/TLS）与 whatgate 运营诊断均结构化（`-emit-*` 机器产物仍走 stdout 不受影响）。 |
 
 ---
 

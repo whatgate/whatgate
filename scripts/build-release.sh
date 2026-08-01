@@ -4,8 +4,8 @@
 #
 # Produces three binaries per platform:
 #   coordinator  — the coordination server
-#   node         — the participant (lean; SOCKS5 proxy, no TUN)
-#   node-tun     — the participant built with -tags tun (whole-system VPN mode;
+#   whatgate     — the participant (lean; SOCKS5 proxy, no TUN)
+#   whatgate-tun — the participant built with -tags tun (whole-system VPN mode;
 #                  needs admin/root at runtime, and wintun.dll on Windows)
 #
 # Usage:
@@ -53,10 +53,10 @@ for target in $TARGETS; do
 		-o "$stage/coordinator${ext}" ./cmd/coordinator
 	CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
 		go build -trimpath -ldflags "$LDFLAGS" \
-		-o "$stage/node${ext}" ./cmd/node
+		-o "$stage/whatgate${ext}" ./cmd/whatgate
 	CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
 		go build -trimpath -tags tun -ldflags "$LDFLAGS" \
-		-o "$stage/node-tun${ext}" ./cmd/node
+		-o "$stage/whatgate-tun${ext}" ./cmd/whatgate
 
 	# Ship docs alongside the binaries.
 	cp README.md "$stage/" 2>/dev/null || true

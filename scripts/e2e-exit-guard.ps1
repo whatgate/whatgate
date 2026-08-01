@@ -13,7 +13,7 @@ $bin  = Join-Path (Split-Path -Parent $PSScriptRoot) 'bin'
 $logs = Join-Path $env:TEMP 'whatgate-e2e'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
 
-Get-Process node,coordinator -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
+Get-Process whatgate,coordinator -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 Start-Sleep -Milliseconds 400
 
 function Wait-ForLine($path,$pattern,$timeoutSec){
@@ -38,12 +38,12 @@ function Run-Guard($idx,$exitExtra,$clientExtra,$curlHost,$expectSuccess,$label)
         if(-not (Wait-ForLine $co 'coordinator listening' 10)){ throw "coord $idx not up" }
 
         $eArgs=@('-listen',"/ip4/127.0.0.1/tcp/$eport",'-coordinator',"http://127.0.0.1:$port",'-invite','welcome','-exit','-region','JP')+$exitExtra
-        $pe=Start-Process "$bin\node.exe" -ArgumentList $eArgs -RedirectStandardOutput $eo -RedirectStandardError "$eo.err" -WindowStyle Hidden -PassThru; $procs+=$pe
+        $pe=Start-Process "$bin\whatgate.exe" -ArgumentList $eArgs -RedirectStandardOutput $eo -RedirectStandardError "$eo.err" -WindowStyle Hidden -PassThru; $procs+=$pe
         if(-not (Wait-ForLine $eo 'exit: ENABLED' 15)){ throw "exit $idx not ready" }
         Start-Sleep -Seconds 2
 
         $cArgs=@('-listen',"/ip4/127.0.0.1/tcp/$cport",'-coordinator',"http://127.0.0.1:$port",'-invite','welcome','-to','JP','-socks',"127.0.0.1:$socks")+$clientExtra
-        $pc=Start-Process "$bin\node.exe" -ArgumentList $cArgs -RedirectStandardOutput $cl -RedirectStandardError "$cl.err" -WindowStyle Hidden -PassThru; $procs+=$pc
+        $pc=Start-Process "$bin\whatgate.exe" -ArgumentList $cArgs -RedirectStandardOutput $cl -RedirectStandardError "$cl.err" -WindowStyle Hidden -PassThru; $procs+=$pc
         $ready=Wait-ForLine $cl 'SOCKS5 proxy on' 12
 
         $succeeded=$false; $detail=""

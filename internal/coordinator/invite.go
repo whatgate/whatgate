@@ -12,6 +12,7 @@ import (
 var (
 	ErrUnknownInvite   = errors.New("coordinator: unknown invite code")
 	ErrInviteExhausted = errors.New("coordinator: invite code exhausted")
+	ErrBootstrapClosed = errors.New("coordinator: first-member bootstrap is closed")
 )
 
 // invite is a redeemable admission code.
@@ -67,6 +68,9 @@ func (s *InviteStore) Create(code, issuer string, maxUses int) {
 func (s *InviteStore) Redeem(code, peerID string) (issuer string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if admission, ok := s.admissions[peerID]; ok {
+		return admission.Issuer, nil
+	}
 
 	inv, ok := s.invites[code]
 	if !ok {
@@ -83,6 +87,26 @@ func (s *InviteStore) Redeem(code, peerID string) (issuer string, err error) {
 		At:     s.now(),
 	}
 	return inv.issuer, nil
+}
+
+// Bootstrap admits the first member without an invite. It is atomic so two
+// concurrent first-run requests cannot both become founders. Repeating the
+// request for the already-admitted founder is idempotent.
+func (s *InviteStore) Bootstrap(peerID string) (issuer string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if admission, ok := s.admissions[peerID]; ok {
+		return admission.Issuer, nil
+	}
+	if len(s.admissions) != 0 {
+		return "", ErrBootstrapClosed
+	}
+	s.admissions[peerID] = Admission{
+		PeerID: peerID,
+		Issuer: peerID,
+		At:     s.now(),
+	}
+	return peerID, nil
 }
 
 // AdmissionOf returns how peerID was admitted, if it was.

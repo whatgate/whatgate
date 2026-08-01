@@ -1,0 +1,619 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:WhatGate.Desktop.ViewModels"
+        xmlns:models="using:WhatGate.Desktop.Models"
+        x:Class="WhatGate.Desktop.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Width="1180"
+        Height="780"
+        MinWidth="980"
+        MinHeight="680"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource CanvasBrush}"
+        Title="WhatGate 安全网络">
+
+  <Grid ColumnDefinitions="226,*">
+    <Border Grid.Column="0" Background="#0F172A">
+      <Grid Margin="20,24,20,20" RowDefinitions="Auto,30,Auto,*,Auto">
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+          <Border Width="42" Height="42" CornerRadius="13" Background="#2563EB">
+            <TextBlock Text="W" FontSize="21" FontWeight="Bold" Foreground="White"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel VerticalAlignment="Center" Spacing="1">
+            <TextBlock Text="WhatGate" FontSize="18" FontWeight="Bold" Foreground="White" />
+            <TextBlock Text="安全网络客户端" FontSize="11" Foreground="#94A3B8" />
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Spacing="8">
+          <Button Classes="nav" Command="{Binding ShowHomeCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <TextBlock Text="●" FontSize="12" Foreground="#60A5FA" />
+              <TextBlock Text="连接总览" />
+            </StackPanel>
+          </Button>
+          <Button Classes="nav" Command="{Binding ShowSetupCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <TextBlock Text="◆" FontSize="12" Foreground="#A78BFA" />
+              <TextBlock Text="连接设置" />
+            </StackPanel>
+          </Button>
+          <Button Classes="nav" Command="{Binding ShowAdvancedCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <TextBlock Text="✦" FontSize="13" Foreground="#FBBF24" />
+              <TextBlock Text="高级管理" />
+            </StackPanel>
+          </Button>
+          <Button Classes="nav" Command="{Binding ShowLogsCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <TextBlock Text="▤" FontSize="14" Foreground="#34D399" />
+              <TextBlock Text="运行记录" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
+        <Border Grid.Row="4" Padding="14" CornerRadius="14" Background="#172033"
+                BorderBrush="#263247" BorderThickness="1">
+          <StackPanel Spacing="8">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Border Width="9" Height="9" CornerRadius="5" Background="{Binding StatusColor}"
+                      VerticalAlignment="Center" />
+              <TextBlock Text="{Binding StatusText}" Foreground="White" FontWeight="SemiBold" />
+            </StackPanel>
+            <TextBlock Text="{Binding CoreHint}" Foreground="#94A3B8" FontSize="11"
+                       TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="1" RowDefinitions="76,*">
+      <Border Grid.Row="0" Background="White" BorderBrush="{StaticResource LineBrush}"
+              BorderThickness="0,0,0,1" Padding="30,0">
+        <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+          <StackPanel>
+            <TextBlock Text="{Binding PageTitle}" FontSize="20" FontWeight="Bold" />
+            <TextBlock Text="简单、可靠地连接到 WhatGate 网络" Classes="muted" FontSize="12" />
+          </StackPanel>
+          <Border Grid.Column="1" Padding="12,7" CornerRadius="18" Background="#F8FAFC"
+                  BorderBrush="{StaticResource LineBrush}" BorderThickness="1">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Border Width="8" Height="8" CornerRadius="4" Background="{Binding StatusColor}"
+                      VerticalAlignment="Center" />
+              <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" FontSize="12" />
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Border>
+
+      <Grid Grid.Row="1">
+        <!-- Overview -->
+        <ScrollViewer IsVisible="{Binding IsHomeVisible}">
+          <StackPanel Margin="30,26,30,34" Spacing="20">
+            <Border CornerRadius="22" Padding="30,26">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                  <GradientStop Color="#1D4ED8" Offset="0" />
+                  <GradientStop Color="#2563EB" Offset="0.58" />
+                  <GradientStop Color="#4F46E5" Offset="1" />
+                </LinearGradientBrush>
+              </Border.Background>
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="{Binding StatusText}" FontSize="28" FontWeight="Bold"
+                             Foreground="White" />
+                  <TextBlock Text="{Binding StatusDetail}" FontSize="14" Foreground="#DBEAFE" />
+                  <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,10,0,0">
+                    <Button Classes="primary" Content="{Binding PrimaryButtonText}"
+                            Command="{Binding PrimaryActionCommand}" Background="White" Foreground="#1D4ED8" />
+                    <Button Classes="ghost" Content="停止"
+                            Command="{Binding StopCommand}"
+                            IsVisible="{Binding IsOwnedProcess}"
+                            BorderBrush="#80FFFFFF" Foreground="White" />
+                  </StackPanel>
+                </StackPanel>
+                <Border Grid.Column="1" Width="150" Height="112" CornerRadius="28"
+                        Background="#20FFFFFF" BorderBrush="#35FFFFFF" BorderThickness="1">
+                  <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+                    <TextBlock Text="✓" FontSize="38" FontWeight="Bold" Foreground="White"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="端到端加密" FontSize="12" Foreground="#DBEAFE" />
+                  </StackPanel>
+                </Border>
+              </Grid>
+            </Border>
+
+            <Border Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1"
+                    CornerRadius="12" Padding="14,11" IsVisible="{Binding HasNotice}">
+              <TextBlock Text="{Binding Notice}" Foreground="#1E40AF" TextWrapping="Wrap" />
+            </Border>
+
+            <Grid ColumnDefinitions="1.25*,0.85*" ColumnSpacing="20">
+              <StackPanel Grid.Column="0" Spacing="20">
+                <Border Classes="card">
+                  <StackPanel Spacing="18">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel>
+                        <TextBlock Text="选择访问地区" Classes="h2" />
+                        <TextBlock Text="切换后，新连接将自动使用该地区的可用出口"
+                                   Classes="muted" FontSize="12" Margin="0,4,0,0" />
+                      </StackPanel>
+                      <Border Grid.Column="1" Background="#ECFDF5" CornerRadius="12" Padding="11,7">
+                        <TextBlock Text="{Binding ActiveRegion}" Foreground="#047857"
+                                   FontWeight="SemiBold" />
+                      </Border>
+                    </Grid>
+
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <ComboBox ItemsSource="{Binding Regions}"
+                                SelectedItem="{Binding SelectedRegion}"
+                                HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="models:RegionOption">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                              <TextBlock Text="{Binding Code}" FontWeight="Bold" Width="28" />
+                              <TextBlock Text="{Binding Name}" />
+                            </StackPanel>
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <Button Grid.Column="1" Classes="secondary" Content="切换地区"
+                              Command="{Binding SwitchRegionCommand}"
+                              IsEnabled="{Binding CanSwitchRegion}" />
+                    </Grid>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="card">
+                  <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                    <Border Width="48" Height="48" CornerRadius="14" Background="#EEF2FF">
+                      <TextBlock Text="↗" FontSize="24" Foreground="#4F46E5"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding ProxyTitle}" FontWeight="SemiBold" FontSize="15" />
+                      <TextBlock Text="{Binding ProxyDetail}" FontFamily="Consolas"
+                                 Classes="muted" FontSize="12" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Classes="ghost" Content="复制地址"
+                            Command="{Binding CopyProxyCommand}" VerticalAlignment="Center"
+                            IsVisible="{Binding CanCopyProxy}" />
+                  </Grid>
+                </Border>
+              </StackPanel>
+
+              <StackPanel Grid.Column="1" Spacing="20">
+                <Border Classes="card" Background="#F8FAFF">
+                  <StackPanel Spacing="15">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel>
+                        <TextBlock Text="邀请新成员" Classes="h2" />
+                        <TextBlock Text="由协调器随机生成，不需要你自己设置邀请码。"
+                                   Classes="muted" FontSize="12" Margin="0,3,0,0" />
+                      </StackPanel>
+                      <Border Grid.Column="1" Width="40" Height="40" CornerRadius="12"
+                              Background="#EDE9FE">
+                        <TextBlock Text="＋" FontSize="22" Foreground="#7C3AED"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      </Border>
+                    </Grid>
+                    <StackPanel Spacing="5">
+                      <TextBlock Text="协调器地址" Classes="muted" FontSize="11" />
+                      <TextBlock Text="{Binding ShareCoordinatorUrl}" FontFamily="Consolas"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <ComboBox ItemsSource="{Binding InviteUseOptions}"
+                                SelectedItem="{Binding InviteMaxUses}" />
+                      <Button Grid.Column="1" Classes="secondary" Content="生成邀请码"
+                              Command="{Binding GenerateInviteCommand}"
+                              IsEnabled="{Binding CanCreateInvites}" />
+                    </Grid>
+                    <Border Background="#FFFFFF" BorderBrush="#DDD6FE" BorderThickness="1"
+                            CornerRadius="11" Padding="12" IsVisible="{Binding HasGeneratedInvitation}">
+                      <StackPanel Spacing="10">
+                        <TextBlock Text="{Binding GeneratedInvitationCode}" FontFamily="Consolas"
+                                   FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                          <Button Classes="ghost" Content="复制邀请码"
+                                  Command="{Binding CopyInvitationCommand}" />
+                          <Button Grid.Column="1" Classes="primary" Content="复制全部连接信息"
+                                  Command="{Binding CopyConnectionInfoCommand}" />
+                        </Grid>
+                      </StackPanel>
+                    </Border>
+                    <TextBlock Text="局域网地址只应分享给可信成员；跨互联网使用时应部署 HTTPS 协调器。"
+                               Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="card">
+                  <StackPanel Spacing="16">
+                    <TextBlock Text="节点状态" Classes="h2" />
+                    <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="Auto,*"
+                          RowSpacing="13" ColumnSpacing="18">
+                      <TextBlock Text="设备身份" Classes="muted" />
+                      <TextBlock Grid.Column="1" Text="{Binding PeerId}" FontFamily="Consolas"
+                                 TextTrimming="CharacterEllipsis" HorizontalAlignment="Right" />
+                      <TextBlock Grid.Row="1" Text="当前出口" Classes="muted" />
+                      <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ConnectedExit}"
+                                 FontFamily="Consolas" HorizontalAlignment="Right" />
+                      <TextBlock Grid.Row="2" Text="运行时间" Classes="muted" />
+                      <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Uptime}"
+                                 HorizontalAlignment="Right" />
+                    </Grid>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="card">
+                  <StackPanel Spacing="13">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel>
+                        <TextBlock Text="共享我的网络" Classes="h2" />
+                        <TextBlock Text="仅在你明确开启时生效" Classes="muted"
+                                   FontSize="12" Margin="0,3,0,0" />
+                      </StackPanel>
+                      <Border Grid.Column="1" Width="38" Height="38" CornerRadius="12"
+                              Background="#FFF7ED">
+                        <TextBlock Text="⇄" FontSize="20" Foreground="#EA580C"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      </Border>
+                    </Grid>
+                    <TextBlock Text="开启后，其他成员访问网站时可能使用你的公网 IP。默认安全策略会阻止内网和高风险端口。"
+                               Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    <Button Classes="secondary" Content="{Binding ShareButtonText}"
+                            Command="{Binding ToggleShareCommand}"
+                            IsEnabled="{Binding CanToggleExit}" />
+                  </StackPanel>
+                </Border>
+
+                <Button Classes="ghost" Content="在客户端中打开高级管理"
+                        Command="{Binding ShowAdvancedCommand}" />
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Advanced management (embedded in the desktop app) -->
+        <ScrollViewer IsVisible="{Binding IsAdvancedVisible}">
+          <StackPanel Margin="30,26,30,34" Spacing="20">
+            <Border CornerRadius="20" Padding="24,21" Background="#111D35">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="20">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="高级管理已内嵌到客户端" FontSize="22" FontWeight="Bold"
+                             Foreground="White" />
+                  <TextBlock Text="管理节点、信任圈和共享出口，无需再打开本地网页。"
+                             Foreground="#BFD4F5" TextWrapping="Wrap" />
+                </StackPanel>
+                <Border Grid.Column="1" Padding="12,8" CornerRadius="16"
+                        Background="#183B82" VerticalAlignment="Center">
+                  <TextBlock Text="本地安全控制" Foreground="#DBEAFE" FontWeight="SemiBold" />
+                </Border>
+              </Grid>
+            </Border>
+
+            <Border Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1"
+                    CornerRadius="12" Padding="14,11" IsVisible="{Binding HasNotice}">
+              <TextBlock Text="{Binding Notice}" Foreground="#1E40AF" TextWrapping="Wrap" />
+            </Border>
+
+            <Grid ColumnDefinitions="1.08*,0.92*" ColumnSpacing="20">
+              <StackPanel Grid.Column="0" Spacing="20">
+                <Border Classes="card">
+                  <StackPanel Spacing="17">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel>
+                        <TextBlock Text="节点详情" Classes="h2" />
+                        <TextBlock Text="当前桌面客户端连接到的 WhatGate 节点"
+                                   Classes="muted" FontSize="12" Margin="0,3,0,0" />
+                      </StackPanel>
+                      <Border Grid.Column="1" Padding="10,6" CornerRadius="12" Background="#ECFDF5">
+                        <TextBlock Text="{Binding StatusText}" Foreground="#047857"
+                                   FontWeight="SemiBold" FontSize="12" />
+                      </Border>
+                    </Grid>
+
+                    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                          ColumnDefinitions="108,*" RowSpacing="13" ColumnSpacing="16">
+                      <TextBlock Text="设备身份" Classes="muted" />
+                      <TextBlock Grid.Column="1" Text="{Binding PeerIdFull}" FontFamily="Consolas"
+                                 TextWrapping="Wrap" />
+                      <TextBlock Grid.Row="1" Text="协调器" Classes="muted" />
+                      <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding CoordinatorDisplay}"
+                                 TextWrapping="Wrap" />
+                      <TextBlock Grid.Row="2" Text="节点角色" Classes="muted" />
+                      <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding RoleDisplay}" />
+                      <TextBlock Grid.Row="3" Text="信任模式" Classes="muted" />
+                      <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding TrustModeDisplay}" />
+                      <TextBlock Grid.Row="4" Text="当前出口" Classes="muted" />
+                      <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ConnectedExit}"
+                                 FontFamily="Consolas" />
+                      <TextBlock Grid.Row="5" Text="运行时间" Classes="muted" />
+                      <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Uptime}" />
+                    </Grid>
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="card">
+                  <StackPanel Spacing="16">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="我的信任圈" Classes="h2" />
+                      <TextBlock Text="同一信任圈中的节点可按你的信任策略互相提供连接。"
+                                 Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ListBox ItemsSource="{Binding Groups}" IsVisible="{Binding HasGroups}"
+                             Background="Transparent" BorderThickness="0" MaxHeight="150">
+                      <ListBox.ItemTemplate>
+                        <DataTemplate>
+                          <Border Margin="0,3" Padding="12,8" CornerRadius="10"
+                                  Background="#F1F5F9">
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                              <Border Width="8" Height="8" CornerRadius="4" Background="#22C55E"
+                                      VerticalAlignment="Center" />
+                              <TextBlock Grid.Column="1" Text="{Binding}" FontWeight="SemiBold" />
+                            </Grid>
+                          </Border>
+                        </DataTemplate>
+                      </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock Text="{Binding ManagementStatus}" Classes="muted" FontSize="12" />
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="card" IsEnabled="{Binding CanManageGroups}">
+                  <StackPanel Spacing="15">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="加入或创建信任圈" Classes="h2" />
+                      <TextBlock Text="口令只用于本次操作，不会保存到客户端。"
+                                 Classes="muted" FontSize="12" />
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                      <StackPanel Spacing="6">
+                        <TextBlock Text="信任圈名称" FontWeight="SemiBold" />
+                        <TextBox Text="{Binding NewGroupId}" Watermark="例如 family" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="1" Spacing="6">
+                        <TextBlock Text="信任圈口令" FontWeight="SemiBold" />
+                        <TextBox Text="{Binding GroupSecret}" PasswordChar="●"
+                                 Watermark="本次使用后立即清除" />
+                      </StackPanel>
+                    </Grid>
+                    <Button Classes="primary" Content="加入信任圈"
+                            Command="{Binding JoinGroupCommand}" HorizontalAlignment="Stretch" />
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+
+              <StackPanel Grid.Column="1" Spacing="20">
+                <Border Classes="card">
+                  <StackPanel Spacing="15">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel>
+                        <TextBlock Text="共享出口" Classes="h2" />
+                        <TextBlock Text="控制是否允许信任成员使用你的公网连接"
+                                   Classes="muted" FontSize="12" Margin="0,3,0,0" />
+                      </StackPanel>
+                      <Border Grid.Column="1" Width="40" Height="40" CornerRadius="12"
+                              Background="#FFF7ED">
+                        <TextBlock Text="⇄" FontSize="20" Foreground="#EA580C"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      </Border>
+                    </Grid>
+                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*"
+                          RowSpacing="11" ColumnSpacing="18">
+                      <TextBlock Text="共享地区" Classes="muted" />
+                      <TextBlock Grid.Column="1" Text="{Binding ExitRegionDisplay}"
+                                 HorizontalAlignment="Right" />
+                      <TextBlock Grid.Row="1" Text="当前负载" Classes="muted" />
+                      <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ExitLoadDisplay}"
+                                 HorizontalAlignment="Right" />
+                    </Grid>
+                    <Button Classes="secondary" Content="{Binding ShareButtonText}"
+                            Command="{Binding ToggleShareCommand}"
+                            IsEnabled="{Binding CanToggleExit}" />
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="card" IsEnabled="{Binding CanManageGroups}">
+                  <StackPanel Spacing="15">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="认可另一个信任圈" Classes="h2" />
+                      <TextBlock Text="代表你所在的信任圈，为另一个信任圈建立信任关系。"
+                                 Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="6">
+                      <TextBlock Text="以哪个信任圈担保" FontWeight="SemiBold" />
+                      <ComboBox ItemsSource="{Binding Groups}"
+                                SelectedItem="{Binding SelectedFromGroup}" />
+                    </StackPanel>
+                    <StackPanel Spacing="6">
+                      <TextBlock Text="要认可的信任圈" FontWeight="SemiBold" />
+                      <TextBox Text="{Binding EndorseTargetGroup}" Watermark="填写对方信任圈名称" />
+                    </StackPanel>
+                    <Button Classes="secondary" Content="确认认可"
+                            Command="{Binding EndorseGroupCommand}" />
+                  </StackPanel>
+                </Border>
+
+                <Border Classes="card" Background="#F8FAFF">
+                  <StackPanel Spacing="13">
+                    <TextBlock Text="运行诊断" Classes="h2" />
+                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*"
+                          RowSpacing="11" ColumnSpacing="16">
+                      <TextBlock Text="桌面核心" Classes="muted" />
+                      <TextBlock Grid.Column="1" Text="{Binding CoreHint}" TextWrapping="Wrap" />
+                      <TextBlock Grid.Row="1" Text="本地控制" Classes="muted" />
+                      <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding StatusText}" />
+                    </Grid>
+                    <TextBlock Text="客户端只通过本机接口完成控制，不会再调用系统浏览器。"
+                               Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    <Button Classes="ghost" Content="查看运行记录"
+                            Command="{Binding ShowLogsCommand}" />
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Setup -->
+        <ScrollViewer IsVisible="{Binding IsSetupVisible}">
+          <Grid Margin="30,26,30,34" ColumnDefinitions="1.25*,0.75*" ColumnSpacing="20">
+            <Border Grid.Column="0" Classes="card">
+              <StackPanel Spacing="18">
+                <StackPanel Spacing="5">
+                  <TextBlock Text="开始使用 WhatGate" Classes="h1" />
+                  <TextBlock Text="第一个使用者可直接创建网络；已有网络的成员使用地址和邀请码加入。"
+                             Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <StackPanel Spacing="7">
+                  <TextBlock Text="你想怎么开始？" FontWeight="SemiBold" />
+                  <ComboBox ItemsSource="{Binding NetworkModes}"
+                            SelectedItem="{Binding SelectedNetworkMode}"
+                            HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="models:NetworkModeOption">
+                        <StackPanel Margin="0,4" Spacing="2">
+                          <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding Description}" Classes="muted" FontSize="11" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+
+                <Border Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1"
+                        CornerRadius="12" Padding="14" IsVisible="{Binding IsCreateNetworkMode}">
+                  <StackPanel Spacing="11">
+                    <TextBlock Text="无需邀请码" Foreground="#047857" FontWeight="Bold" />
+                    <TextBlock Text="客户端会在本机创建协调服务，并把你安全地登记为首位管理员。"
+                               Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
+                      <StackPanel Spacing="5">
+                        <TextBlock Text="可分享的局域网地址" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding ShareCoordinatorUrl}" FontFamily="Consolas"
+                                   TextWrapping="Wrap" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="1" Spacing="5">
+                        <TextBlock Text="建网端口" FontWeight="SemiBold" />
+                        <TextBox Text="{Binding LocalCoordinatorPort}" Watermark="8080" />
+                      </StackPanel>
+                    </Grid>
+                  </StackPanel>
+                </Border>
+
+                <StackPanel Spacing="7" IsVisible="{Binding IsJoinNetworkMode}">
+                  <TextBlock Text="协调器地址" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding CoordinatorUrl}" Watermark="https://example.com:8080" />
+                  <TextBlock Text="用于发现可用节点，支持填写多个逗号分隔的地址。"
+                             Classes="muted" FontSize="11" />
+                </StackPanel>
+
+                <StackPanel Spacing="7" IsVisible="{Binding IsJoinNetworkMode}">
+                    <TextBlock Text="邀请码" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding InvitationCode}" PasswordChar="●"
+                             Watermark="首次连接时填写" />
+                    <TextBlock Text="仅用于本次注册，不会保存。" Classes="muted" FontSize="11" />
+                </StackPanel>
+
+                <StackPanel Spacing="7">
+                    <TextBlock Text="访问地区" FontWeight="SemiBold" />
+                    <ComboBox ItemsSource="{Binding Regions}" SelectedItem="{Binding SelectedRegion}">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="models:RegionOption">
+                          <TextBlock Text="{Binding DisplayName}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Spacing="7">
+                  <TextBlock Text="信任模式" FontWeight="SemiBold" />
+                  <ComboBox ItemsSource="{Binding TrustModes}"
+                            SelectedItem="{Binding SelectedTrustMode}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="models:TrustModeOption">
+                        <StackPanel Margin="0,4" Spacing="2">
+                          <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding Description}" FontSize="11"
+                                     Foreground="{StaticResource MutedBrush}" />
+                        </StackPanel>
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+
+                <StackPanel Spacing="7" IsVisible="{Binding IsJoinNetworkMode}">
+                  <TextBlock Text="协调器公钥（推荐）" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding CoordinatorKey}"
+                           Watermark="管理员提供的 Base64 公钥" />
+                  <TextBlock Text="填写后可验证节点目录，避免被伪造的协调器误导。"
+                             Classes="muted" FontSize="11" />
+                </StackPanel>
+
+                <Border Background="#FEF3C7" BorderBrush="#FDE68A" BorderThickness="1"
+                        CornerRadius="11" Padding="13" IsVisible="{Binding HasNotice}">
+                  <TextBlock Text="{Binding Notice}" Foreground="#92400E" TextWrapping="Wrap" />
+                </Border>
+
+                <Button Classes="primary" Content="{Binding StartButtonText}"
+                        Command="{Binding StartCommand}" HorizontalAlignment="Stretch" />
+              </StackPanel>
+            </Border>
+
+            <StackPanel Grid.Column="1" Spacing="18">
+              <Border Classes="card" Background="#F8FAFF">
+                <StackPanel Spacing="14">
+                  <Border Width="54" Height="54" CornerRadius="17" Background="#DBEAFE"
+                          HorizontalAlignment="Left">
+                    <TextBlock Text="✓" FontSize="28" FontWeight="Bold" Foreground="#2563EB"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  </Border>
+                  <TextBlock Text="默认保护已开启" Classes="h2" />
+                  <TextBlock Text="本地控制接口只监听 127.0.0.1，不会暴露给局域网。设备身份保存在系统应用数据目录中。"
+                             Classes="muted" TextWrapping="Wrap" LineHeight="21" />
+                </StackPanel>
+              </Border>
+
+              <Border Classes="card">
+                <StackPanel Spacing="13">
+                  <TextBlock Text="第一次使用？" Classes="h2" />
+                  <TextBlock Text="1  选择“创建我的网络”" Classes="muted" />
+                  <TextBlock Text="2  保持“仅信任圈”推荐模式" Classes="muted" />
+                  <TextBlock Text="3  点击创建并启动网络" Classes="muted" />
+                  <TextBlock Text="4  客户端会自动生成成员邀请码" Classes="muted" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </Grid>
+        </ScrollViewer>
+
+        <!-- Logs -->
+        <Grid IsVisible="{Binding IsLogsVisible}" Margin="30,26,30,34"
+              RowDefinitions="Auto,*">
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,14">
+            <StackPanel>
+              <TextBlock Text="运行记录" Classes="h1" />
+              <TextBlock Text="连接异常时，可将这里的内容复制给管理员排查。"
+                         Classes="muted" />
+            </StackPanel>
+            <Button Grid.Column="1" Classes="ghost" Content="清空记录"
+                    Command="{Binding ClearLogsCommand}" VerticalAlignment="Center" />
+          </Grid>
+          <Border Grid.Row="1" Background="#0B1220" CornerRadius="18" Padding="18">
+            <ListBox ItemsSource="{Binding Logs}" Background="Transparent" BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding}" Foreground="#CBD5E1" FontFamily="Consolas"
+                             FontSize="12" TextWrapping="Wrap" Margin="0,3" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Border>
+        </Grid>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>
