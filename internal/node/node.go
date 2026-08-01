@@ -18,6 +18,7 @@ import (
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/connmgr"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -55,6 +56,7 @@ type config struct {
 	listenAddrs  []string
 	staticRelays []peer.AddrInfo
 	gater        connmgr.ConnectionGater
+	identity     crypto.PrivKey
 }
 
 // Option configures a Node.
@@ -71,6 +73,12 @@ func WithListenAddrs(addrs ...string) Option {
 // reach it when direct connectivity (hole punching) fails.
 func WithStaticRelays(relays ...peer.AddrInfo) Option {
 	return func(c *config) { c.staticRelays = relays }
+}
+
+// WithIdentity keeps a stable libp2p identity across restarts. Callers should
+// load the private key from an owner-only file.
+func WithIdentity(identity crypto.PrivKey) Option {
+	return func(c *config) { c.identity = identity }
 }
 
 // New creates a Node. Without options it listens on an OS-assigned TCP port on
@@ -91,6 +99,9 @@ func New(ctx context.Context, opts ...Option) (*Node, error) {
 		libp2p.NATPortMap(),
 		libp2p.EnableNATService(),
 		libp2p.EnableHolePunching(),
+	}
+	if cfg.identity != nil {
+		libOpts = append(libOpts, libp2p.Identity(cfg.identity))
 	}
 	// Circuit Relay v2 fallback: reserve on the given relays when direct
 	// connectivity cannot be established.

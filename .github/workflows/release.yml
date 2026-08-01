@@ -15,7 +15,7 @@ permissions:
   contents: write # required to create the release and upload assets
 
 jobs:
-  release:
+  core:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,12 +43,65 @@ jobs:
           name: whatgate-binaries
           path: dist/*
 
-      # Only publish a Release for real tag pushes.
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            family: windows
+            runtimes: "@('win-x64','win-arm64')"
+          - runner: ubuntu-latest
+            family: linux
+            runtimes: "@('linux-x64','linux-arm64')"
+          - runner: macos-latest
+            family: macos
+            runtimes: "@('osx-x64','osx-arm64')"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: build desktop packages
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = git describe --tags --always
+          }
+          ./scripts/build-desktop.ps1 -Version $version -Runtimes ${{ matrix.runtimes }}
+
+      - name: upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: whatgate-desktop-${{ matrix.family }}
+          path: dist/desktop/*
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [core, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
       - name: publish release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/* \
+          gh release create "${GITHUB_REF_NAME}" release-artifacts/* \
+            --repo "${GITHUB_REPOSITORY}" \
             --title "WhatGate ${GITHUB_REF_NAME}" \
             --generate-notes

@@ -47,6 +47,8 @@ type Controls struct {
 	JoinGroup func(groupID, secret string) error
 	// Endorse makes fromGroup vouch for toGroup (caller must be a fromGroup member).
 	Endorse func(fromGroup, toGroup string) error
+	// CreateInvite mints a random invite for new members.
+	CreateInvite func(maxUses int) (code string, err error)
 }
 
 // Server serves the dashboard over HTTP.
@@ -137,6 +139,30 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/api/invite/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if s.controls.CreateInvite == nil {
+			http.Error(w, "invite creation not available", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			MaxUses int `json:"maxUses"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		code, err := s.controls.CreateInvite(req.MaxUses)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "maxUses": req.MaxUses})
 	})
 	mux.HandleFunc("/api/setup", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

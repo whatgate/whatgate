@@ -81,7 +81,7 @@ sequenceDiagram
 | `internal/relay` | Circuit Relay v2 服务 | `Relay` | libp2p |
 | `internal/coordinator` | 目录、邀请、HTTP、客户端 | `Directory`、`InviteStore`、`Server`、`Client` | 无 libp2p（纯 HTTP/逻辑） |
 | `internal/routing` | 选路 | `PickExit` | `coordinator` |
-| `cmd/node`、`cmd/coordinator` | 装配可执行文件 | `main` | 上述 |
+| `cmd/whatgate`、`cmd/coordinator` | 装配可执行文件 | `main` | 上述 |
 
 **解耦要点**：`internal/tunnel` 与 `internal/proxy` **不依赖 libp2p**——它们操作 `net.Conn`，所以核心逻辑用 `net.Pipe` 就能测；`internal/coordinator` 也不碰 libp2p，是纯 HTTP + 内存状态。libp2p 只集中在 `internal/node` 与 `internal/relay`。
 
@@ -123,6 +123,7 @@ Coordinator 暴露的端点（JSON）：
 | 方法 | 路径 | 作用 | 备注 |
 |---|---|---|---|
 | POST | `/join` | 兑换邀请码准入 | `{code, peerID}` → `{issuer}`；未知码 404，用尽 409 |
+| POST | `/invite/create` | 已准入成员签名生成随机邀请码 | `{maxUses, auth}` → `{code, maxUses}` |
 | POST | `/register` | 注册/刷新节点存在 | 需已准入，否则 403 |
 | GET | `/directory` | 查询在线节点 | 返回未过期条目 |
 | GET | `/relay` | 取中继地址 | 无中继时 404 |

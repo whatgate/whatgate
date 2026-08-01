@@ -1,8 +1,11 @@
 # Release artifacts (produced by scripts/build-release.sh)
 /dist/
+/desktop/WhatGate.Desktop/Assets/avalonia-logo.ico
 
 # Compiled binaries
 /bin/
+**/bin/
+**/obj/
 *.exe
 *.exe~
 *.dll

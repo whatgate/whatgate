@@ -1,5 +1,9 @@
 # WhatGate
 
+> **普通用户推荐：桌面客户端。** 新增了 WPF/XAML 风格的跨平台客户端，支持
+> Windows、macOS 和 Linux，内置首次连接引导、地区切换、启动/停止、共享出口开关和
+> 运行日志。构建与安装说明见 [desktop/README.md](desktop/README.md)。
+
 **一个邀请制的 P2P 代理分享网络。** 一群互相信任的人组成一张网，每个人既能借用别人在其他地区的出口访问受地域限制的内容，也能（在自己愿意时）成为别人的出口。没有中心服务器持有你的流量——代理数据在节点之间点对点加密直连。
 
 > ⚠️ **成为别人的出口默认是关闭的**，必须你主动开启。开启后有一整套保护机制（信任范围、流量策略、限额熔断、本地留痕）帮你抵御滥用。请在遵守当地法律法规的前提下使用。
@@ -16,14 +20,14 @@
 
 假设有人给了你**协调器地址**、**邀请码**，以及（推荐）协调器启动时打印的**协调器公钥**。
 
-**1. 下载。** 到 [Releases](https://github.com/whatgate/whatgate/releases) 下对应平台的包（Windows/macOS/Linux × amd64/arm64），解压。里面的 `node` 就是你要用的程序（`node -version` 看版本，`SHA256SUMS` 可校验完整性）。
+**1. 下载。** 到 [Releases](https://github.com/whatgate/whatgate/releases) 下对应平台的包（Windows/macOS/Linux × amd64/arm64），解压。里面的 `whatgate`（Windows 为 `whatgate.exe`）就是你要用的程序（`whatgate -version` 看版本，`SHA256SUMS` 可校验完整性）。
 
 **2. 连上网络，按地区自动选出口。**
 
 ```bash
 # -to JP：想要日本出口；-socks：本地 SOCKS5 代理监听地址
 # -trust-scope：你愿意用谁的出口（conservative=只用信任圈内的；open=也用陌生人的）
-node -coordinator https://<host>:8080 -coordinator-key <协调器公钥> \
+whatgate -coordinator https://<host>:8080 -coordinator-key <协调器公钥> \
      -invite <邀请码> -to JP -trust-scope open -socks 127.0.0.1:1080
 ```
 
@@ -41,18 +45,22 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org   # 返回的应是�
 两台机器（或两个终端）直接连，不需要协调器：
 
 ```bash
-node -exit                                          # 终端 1：起个出口，复制它打印的某个 /p2p/ 多地址
-node -connect <出口多地址> -socks 127.0.0.1:1080     # 终端 2：经它建隧道
+whatgate -exit                                          # 终端 1：起个出口，复制它打印的某个 /p2p/ 多地址
+whatgate -connect <出口多地址> -socks 127.0.0.1:1080     # 终端 2：经它建隧道
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```
 
-### 图形界面（可选）
+### 图形界面（推荐）
 
-给 `node` 加 `-web 127.0.0.1:7070`，浏览器打开即可看实时状态并**运行时操作**：切换出口地区、一键开关"作为出口"、加入/创建/背书小网——都不用重启。没给 `-trust-scope` 时，首次打开会有**信任范围向导**解释风险后让你选。
+普通用户建议安装 `desktop/WhatGate.Desktop` 桌面客户端。连接状态、地区切换、代理地址、
+共享出口、节点详情和信任圈管理都直接显示在客户端内，不需要打开 `127.0.0.1:7070`
+网页，也不需要手工重启核心程序。
 
-```bash
-node -coordinator https://<host>:8080 -coordinator-key <公钥> -invite <邀请码> -to JP -web 127.0.0.1:7070
-```
+第一个使用者可在连接设置中直接选择“创建我的网络”，无需预先获取邀请码。客户端会
+自动启动本机协调服务、登记首位管理员并生成后续成员邀请码；已有网络的成员再使用地址
+和邀请码加入。
+
+安装与打包说明见 [桌面客户端说明](desktop/README.md)。
 
 ---
 
@@ -62,7 +70,7 @@ node -coordinator https://<host>:8080 -coordinator-key <公钥> -invite <邀请�
 
 ```bash
 # 只给自己的小网当出口、封高危端口、限并发与带宽
-node -coordinator https://<host>:8080 -coordinator-key <公钥> -invite <邀请码> \
+whatgate -coordinator https://<host>:8080 -coordinator-key <公钥> -invite <邀请码> \
      -exit -region JP \
      -group myfriends -group-secret ourSecret \
      -exit-scope conservative \
@@ -137,14 +145,14 @@ coordinator -addr :8080 -invite welcome -state ./state.json -signing-key ./signi
 <details>
 <summary><b>全局 VPN 模式（TUN）</b></summary>
 
-`node-tun`（或 `go build -tags tun`）把**整机流量**透明导入网络，而不只是配了代理的应用。运行需管理员/root，Windows 另需 `wintun.dll`；`-tun-auto-route` 自动接管默认路由并排除自身流量。见 **[docs/tun-and-mobile.md](docs/tun-and-mobile.md)**（含移动端接入设计）。
+`whatgate-tun`（或 `go build -tags tun`）把**整机流量**透明导入网络，而不只是配了代理的应用。运行需管理员/root，Windows 另需 `wintun.dll`；`-tun-auto-route` 自动接管默认路由并排除自身流量。见 **[docs/tun-and-mobile.md](docs/tun-and-mobile.md)**（含移动端接入设计）。
 </details>
 
 <details>
 <summary><b>可观测性（日志 / 指标）</b></summary>
 
-- **结构化日志**：`-log-format json` 让 node/coordinator 每行输出一个 JSON 对象（`level`/`msg`/字段），便于日志采集器过滤/聚合；默认 `text` 人类可读。
-- **指标**：`node -metrics-addr 127.0.0.1:9090` 以 JSON 暴露 `/metrics`——出口的服务量与**按原因分类的拒绝量**，用来确认限流/隔离/信任策略是否在生效。
+- **结构化日志**：`-log-format json` 让 whatgate/coordinator 每行输出一个 JSON 对象（`level`/`msg`/字段），便于日志采集器过滤/聚合；默认 `text` 人类可读。
+- **指标**：`whatgate -metrics-addr 127.0.0.1:9090` 以 JSON 暴露 `/metrics`——出口的服务量与**按原因分类的拒绝量**，用来确认限流/隔离/信任策略是否在生效。
 
 ```bash
 curl -s http://127.0.0.1:9090/metrics
@@ -157,7 +165,7 @@ curl -s http://127.0.0.1:9090/metrics
 <details>
 <summary><b>配置文件（替代一堆命令行 flag）</b></summary>
 
-flag 多时可写进一个 JSON 文件用 `-config` 加载——**键就是 flag 名**，命令行显式给出的覆盖文件（优先级：命令行 > 文件 > 默认）。未知键会报错（防拼写）。node 与 coordinator 都支持。
+flag 多时可写进一个 JSON 文件用 `-config` 加载——**键就是 flag 名**，命令行显式给出的覆盖文件（优先级：命令行 > 文件 > 默认）。未知键会报错（防拼写）。whatgate 与 coordinator 都支持。
 
 ```jsonc
 // coord.json
@@ -179,8 +187,8 @@ coordinator -config coord.json -uses 7      # -uses 覆盖文件里的值
 从源码构建：
 
 ```bash
-go build -o bin/ ./...                        # 产出 bin/coordinator、bin/node
-go build -tags tun -o bin/node-tun ./cmd/node # 可选：全局 TUN 模式
+go build -o bin/ ./...                                # 产出 bin/coordinator、bin/whatgate
+go build -tags tun -o bin/whatgate-tun ./cmd/whatgate # 可选：全局 TUN 模式
 ```
 
 一键交叉编译六平台发布包到 `dist/`：`scripts/build-release.sh v0.1.0`。维护者推 `git tag v0.1.0 && git push origin v0.1.0`，GitHub Actions 会自动构建并创建 Release。
@@ -192,7 +200,7 @@ go build -tags tun -o bin/node-tun ./cmd/node # 可选：全局 TUN 模式
 
 ```
 cmd/coordinator   协调服务器入口（兼跑 Circuit Relay）
-cmd/node          节点入口（既是客户端也是出口）
+cmd/whatgate      节点入口（既是客户端也是出口）
 internal/proxy    本地 SOCKS5 入口
 internal/tunnel   隧道两端（出/入），解耦具体传输
 internal/node     libp2p 接入：host、隧道、NAT 穿透、中继

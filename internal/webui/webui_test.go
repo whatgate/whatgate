@@ -51,6 +51,14 @@ func TestDashboardServesHTML(t *testing.T) {
 	if !strings.Contains(string(body), "WhatGate") {
 		t.Fatal("dashboard should mention WhatGate")
 	}
+	for _, want := range []string{"选择访问地区", "开始使用", "高级信息", "安全优先"} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("dashboard should contain %q", want)
+		}
+	}
+	if strings.Contains(string(body), "<html lang=\"en\">") {
+		t.Fatal("dashboard should declare Chinese as its document language")
+	}
 }
 
 func TestSwitchEndpointInvokesControl(t *testing.T) {
@@ -158,6 +166,28 @@ func TestGroupJoinInvokesControl(t *testing.T) {
 	}
 	if !called || gotID != "fam" || gotSecret != "k" {
 		t.Fatalf("JoinGroup not invoked properly (id=%q secret=%q)", gotID, gotSecret)
+	}
+}
+
+func TestCreateInviteInvokesControl(t *testing.T) {
+	var gotUses int
+	srv := NewServer(func() Status { return Status{} }, Controls{
+		CreateInvite: func(maxUses int) (string, error) {
+			gotUses = maxUses
+			return "generated-code", nil
+		},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/invite/create", "application/json", strings.NewReader(`{"maxUses":5}`))
+	if err != nil {
+		t.Fatalf("POST /api/invite/create: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || gotUses != 5 || !strings.Contains(string(body), "generated-code") {
+		t.Fatalf("create invite response status=%d uses=%d body=%s", resp.StatusCode, gotUses, body)
 	}
 }
 

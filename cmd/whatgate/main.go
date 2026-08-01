@@ -1,4 +1,4 @@
-// Command node runs a WhatGate participant. A single node can act as a client
+// Command whatgate runs a WhatGate participant. A single node can act as a client
 // (exposing a local SOCKS5 proxy that tunnels to a chosen exit) and/or as an
 // exit (serving other nodes' traffic) — reflecting WhatGate's premise that every
 // online user is both.
@@ -6,13 +6,13 @@
 // Two ways to reach an exit:
 //
 //	# Manual (M1): connect to a known exit multiaddr.
-//	node -exit
-//	node -connect <exit-multiaddr> -socks 127.0.0.1:1080
+//	whatgate -exit
+//	whatgate -connect <exit-multiaddr> -socks 127.0.0.1:1080
 //
 //	# Via coordinator (M2): join, register, and discover an exit by region.
 //	coordinator -addr :8080 -invite welcome
-//	node -coordinator http://host:8080 -invite welcome -exit -region JP
-//	node -coordinator http://host:8080 -invite welcome -to JP -socks 127.0.0.1:1080
+//	whatgate -coordinator http://host:8080 -invite welcome -exit -region JP
+//	whatgate -coordinator http://host:8080 -invite welcome -to JP -socks 127.0.0.1:1080
 //
 // Prove egress happens at the exit:
 //
@@ -67,6 +67,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	configPath := flag.String("config", "", "JSON config file whose keys are flag names; command-line flags override it")
+	identityPath := flag.String("identity", "", "path to a persistent node private key (created on first run, owner-only)")
 	logFormat := flag.String("log-format", "text", "log output format: text (human-readable) or json (one object per line, for log collectors)")
 	listen := flag.String("listen", "/ip4/0.0.0.0/tcp/0", "libp2p listen multiaddr(s), comma-separated; add e.g. /ip4/0.0.0.0/tcp/443/ws to also ride :443 like web traffic (A4)")
 	asExit := flag.Bool("exit", false, "act as an exit node for other peers (serves their traffic)")
@@ -81,6 +82,7 @@ func main() {
 	rootKeyStr := flag.String("root-key", "", "pinned OFFLINE root public key (base64) that anchors the member credential chain; required with -dht")
 	dhtEpoch := flag.Uint64("dht-epoch", 1, "Tier C discovery capability epoch (advertiser and querier must agree; lets the operator rotate the namespace)")
 	invite := flag.String("invite", "", "invite code to redeem when joining via coordinator")
+	bootstrapFounder := flag.Bool("bootstrap-founder", false, "become the first member when the coordinator explicitly permits one-time first-member bootstrap")
 	region := flag.String("region", "", "this node's exit region tag when acting as exit, e.g. JP")
 	toRegion := flag.String("to", "", "desired exit region to discover via coordinator (client mode)")
 	group := flag.String("group", "", "join (or create) this small-network group id")
@@ -117,7 +119,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("whatgate node %s\n", version)
+		fmt.Printf("whatgate %s\n", version)
 		return
 	}
 
@@ -140,6 +142,13 @@ func main() {
 		log.Fatalf("bad -listen: %v", err)
 	}
 	nodeOpts := []node.Option{node.WithListenAddrs(listenAddrs...)}
+	if *identityPath != "" {
+		identity, err := discovery.LoadOrCreateSigningKey(*identityPath)
+		if err != nil {
+			log.Fatalf("identity: %v", err)
+		}
+		nodeOpts = append(nodeOpts, node.WithIdentity(identity))
+	}
 
 	var coord *coordinator.Client
 	if *coordURL != "" {
@@ -243,6 +252,7 @@ func main() {
 		setupFn  func(scope string) (string, error)
 	)
 	needsSetup := func() bool { return false }
+	currentTrustScope := func() string { return *trustScope }
 
 	// Sign identity-proving requests (join/register) with the node's key.
 	if coord != nil {
@@ -394,7 +404,7 @@ func main() {
 	if coord != nil {
 		var dd *dhtDiscovery              // Tier C decentralized discovery (opt-in)
 		var memberCert, issuerCert []byte // credential chain for the private discovery plane
-		if *invite != "" {
+		if *invite != "" || *bootstrapFounder {
 			adm, err := coord.Join(*invite, selfID)
 			if err != nil && *bootstrapURL != "" {
 				// Cold-start self-heal (C2): every known coordinator is unreachable,
@@ -471,6 +481,7 @@ func main() {
 				scopeMu    sync.Mutex
 				curScope   trust.Scope
 				curExitID  peer.ID
+				scopeSet   bool
 				configured bool
 			)
 			// openUDP opens a UDP tunnel to the current exit for SOCKS5 UDP ASSOCIATE.
@@ -490,6 +501,9 @@ func main() {
 			// across successive re-discovery rounds.
 			latTracker := routing.NewLatencyTracker(*latencyAlpha)
 			connectIn := func(sc trust.Scope, region string) (string, error) {
+				scopeMu.Lock()
+				curScope, scopeSet = sc, true
+				scopeMu.Unlock()
 				ai, err := discoverExit(ctx, n, coord, region, selfID, sc, dd, rankWeights, latTracker)
 				if err != nil {
 					return "", err
@@ -505,7 +519,15 @@ func main() {
 				return ai.ID.String(), nil
 			}
 
-			needsSetup = func() bool { scopeMu.Lock(); defer scopeMu.Unlock(); return !configured }
+			needsSetup = func() bool { scopeMu.Lock(); defer scopeMu.Unlock(); return !scopeSet }
+			currentTrustScope = func() string {
+				scopeMu.Lock()
+				defer scopeMu.Unlock()
+				if scopeSet {
+					return curScope.String()
+				}
+				return *trustScope
+			}
 			setupFn = func(scopeStr string) (string, error) {
 				sc, err := trust.ParseScope(scopeStr)
 				if err != nil {
@@ -516,7 +538,7 @@ func main() {
 			}
 			switchTo = func(region string) (string, error) {
 				scopeMu.Lock()
-				sc, ok := curScope, configured
+				sc, ok := curScope, scopeSet
 				scopeMu.Unlock()
 				if !ok {
 					return "", fmt.Errorf("choose a trust scope first")
@@ -534,7 +556,10 @@ func main() {
 					log.Fatalf("%v", err)
 				}
 				if _, err := connectIn(sc, *toRegion); err != nil {
-					log.Fatalf("discover exit: %v", err)
+					if *webAddr == "" {
+						log.Fatalf("discover exit: %v", err)
+					}
+					slog.Warn("no exit available yet; local controls remain online", "region", *toRegion, "err", err)
 				}
 			} else {
 				if *webAddr == "" {
@@ -644,7 +669,7 @@ func main() {
 				ExitRegion:    *region,
 				ExitLoad:      n.ExitLoad(),
 				ToRegion:      curRegion,
-				TrustScope:    *trustScope,
+				TrustScope:    currentTrustScope(),
 				ConnectedExit: curExit,
 				SocksAddr:     socks,
 				CanSwitch:     switchTo != nil,
@@ -661,15 +686,18 @@ func main() {
 		}
 		var joinGroupFn func(string, string) error
 		var endorseFn func(string, string) error
+		var createInviteFn func(int) (string, error)
 		if coord != nil {
 			joinGroupFn = func(gid, secret string) error { return coord.JoinGroup(gid, selfID, secret) }
 			endorseFn = func(from, to string) error { return coord.EndorseGroup(from, to) }
+			createInviteFn = func(maxUses int) (string, error) { return coord.CreateInvite(maxUses) }
 		}
 		webSrv := webui.NewServer(statusFn, webui.Controls{
 			SwitchRegion: switchTo,
 			Setup:        setupFn,
 			JoinGroup:    joinGroupFn,
 			Endorse:      endorseFn,
+			CreateInvite: createInviteFn,
 			ToggleExit: func(on bool) error {
 				setExit(on)
 				// Re-register immediately so the change is visible to others now

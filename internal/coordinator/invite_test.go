@@ -61,3 +61,32 @@ func TestAdmissionIsTraceable(t *testing.T) {
 		t.Fatal("unknown peer should have no admission record")
 	}
 }
+
+func TestBootstrapAdmitsOnlyFirstMember(t *testing.T) {
+	s := NewInviteStore(fixedClock())
+
+	issuer, err := s.Bootstrap("founder")
+	if err != nil || issuer != "founder" {
+		t.Fatalf("bootstrap founder = %q, %v", issuer, err)
+	}
+	if _, err := s.Bootstrap("second"); err != ErrBootstrapClosed {
+		t.Fatalf("second bootstrap err = %v, want ErrBootstrapClosed", err)
+	}
+	if issuer, err := s.Bootstrap("founder"); err != nil || issuer != "founder" {
+		t.Fatalf("repeat founder bootstrap should be idempotent: %q, %v", issuer, err)
+	}
+}
+
+func TestRedeemIsIdempotentForAdmittedPeer(t *testing.T) {
+	s := NewInviteStore(fixedClock())
+	s.Create("once", "founder", 1)
+	if _, err := s.Redeem("once", "peerA"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Redeem("once", "peerA"); err != nil {
+		t.Fatalf("repeat redeem: %v", err)
+	}
+	if _, err := s.Redeem("once", "peerB"); err != ErrInviteExhausted {
+		t.Fatalf("invite use should not be consumed twice by peerA; peerB err = %v", err)
+	}
+}

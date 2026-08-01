@@ -7,7 +7,7 @@
 //	coordinator -addr :8080 -invite welcome -uses 100
 //
 // Distribute the printed invite code to people you want to admit; they pass it
-// to `node -coordinator http://<host>:8080 -invite welcome ...`.
+// to `whatgate -coordinator http://<host>:8080 -invite welcome ...`.
 package main
 
 import (
@@ -40,6 +40,7 @@ func main() {
 	logFormat := flag.String("log-format", "text", "log output format: text (human-readable) or json (one object per line, for log collectors)")
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	invite := flag.String("invite", "welcome", "invite code to seed for admission")
+	bootstrapFirstMember := flag.Bool("bootstrap-first-member", false, "allow exactly one authenticated peer to become the founder when no members have ever been admitted")
 	issuer := flag.String("issuer", "founder", "issuer attributed to the seeded invite")
 	uses := flag.Int("uses", 100, "how many members the seeded invite may admit")
 	ttl := flag.Duration("ttl", 60*time.Second, "directory entry time-to-live")
@@ -61,7 +62,7 @@ func main() {
 	sybilWindow := flag.Duration("sybil-window", time.Hour, "anomaly detection: sliding window over which distinct join identities per IP are counted")
 	sybilMaxIdentities := flag.Int("sybil-max-identities", 0, "anomaly detection: reject join once an IP mints this many distinct PeerIDs within -sybil-window (0 = disabled). Catches patient Sybil growth that stays under -rate-limit. Keyed by IP; set generously for CGNAT/proxy sharing")
 	trustedProxies := flag.String("trusted-proxies", "", "comma-separated IPs/CIDRs of reverse proxies/CDN edges in front of the coordinator; only then is X-Forwarded-For trusted, so per-IP rate-limit/Sybil controls key on the real client instead of collapsing all users onto the proxy IP. REQUIRED when fronting the coordinator with a CDN/proxy (see docs/anti-censorship.md), else those controls mis-key")
-	emitBootstrap := flag.String("emit-bootstrap", "", "sign a bootstrap list of the given comma-separated coordinator URLs (needs -signing-key), print it to stdout, and exit; host the output on an out-of-band channel (CDN/GitHub raw) as a node -bootstrap-url")
+	emitBootstrap := flag.String("emit-bootstrap", "", "sign a bootstrap list of the given comma-separated coordinator URLs (needs -signing-key), print it to stdout, and exit; host the output on an out-of-band channel (CDN/GitHub raw) as a whatgate -bootstrap-url")
 	bootstrapSerial := flag.Uint64("bootstrap-serial", 0, "monotonic serial for -emit-bootstrap; must strictly increase across publications (older ones are rejected as rollbacks)")
 	bootstrapTTL := flag.Duration("bootstrap-ttl", 30*24*time.Hour, "how long a -emit-bootstrap list stays acceptable to nodes")
 	// C1 membership issuance.
@@ -184,6 +185,7 @@ func main() {
 	dir := coordinator.NewDirectory(*ttl, nil)
 	invites := coordinator.NewInviteStore(nil)
 	srv := coordinator.NewServer(dir, invites)
+	srv.SetFirstMemberBootstrap(*bootstrapFirstMember)
 
 	// Restore durable state, then seed the invite only if it is not already
 	// known, and enable save-on-change.
@@ -196,7 +198,7 @@ func main() {
 		srv.SetStatePath(*statePath)
 		slog.Info("state file loaded", "path", *statePath)
 	}
-	if !invites.Exists(*invite) {
+	if *invite != "" && !invites.Exists(*invite) {
 		invites.Create(*invite, *issuer, *uses)
 	}
 

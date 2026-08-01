@@ -8,7 +8,7 @@
 // network stack (gvisor, via tun2socks). The default build stays lean and
 // returns an error if TUN is requested.
 //
-//	go build -tags tun ./cmd/node
+//	go build -tags tun ./cmd/whatgate
 //
 // Running TUN mode requires administrator/root privileges to create the virtual
 // adapter, and on Windows the wintun.dll driver next to the binary. You must

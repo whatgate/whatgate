@@ -112,3 +112,44 @@ func TestRegisterRejectsPeerIDMismatch(t *testing.T) {
 		t.Fatalf("expected 401 for peer ID mismatch, got %v", err)
 	}
 }
+
+func TestFirstMemberBootstrapThenCreateInvite(t *testing.T) {
+	dir := NewDirectory(time.Minute, nil)
+	inv := NewInviteStore(nil)
+	srv := NewServer(dir, inv)
+	srv.SetFirstMemberBootstrap(true)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	founder, founderID := newSignedClient(t, ts.URL)
+	if _, err := founder.Join("", founderID); err != nil {
+		t.Fatalf("bootstrap founder: %v", err)
+	}
+	code, err := founder.CreateInvite(2)
+	if err != nil {
+		t.Fatalf("create invite: %v", err)
+	}
+	if len(code) < 20 {
+		t.Fatalf("generated invite is unexpectedly short: %q", code)
+	}
+
+	member, memberID := newSignedClient(t, ts.URL)
+	if _, err := member.Join(code, memberID); err != nil {
+		t.Fatalf("join generated invite: %v", err)
+	}
+
+	stranger, strangerID := newSignedClient(t, ts.URL)
+	if _, err := stranger.Join("", strangerID); err == nil || !strings.Contains(err.Error(), "409") {
+		t.Fatalf("second invite-free bootstrap should be closed, got %v", err)
+	}
+}
+
+func TestUnadmittedPeerCannotCreateInvite(t *testing.T) {
+	ts := httptest.NewServer(NewServer(NewDirectory(time.Minute, nil), NewInviteStore(nil)).Handler())
+	defer ts.Close()
+
+	stranger, _ := newSignedClient(t, ts.URL)
+	if _, err := stranger.CreateInvite(1); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("unadmitted invite creation should be forbidden, got %v", err)
+	}
+}

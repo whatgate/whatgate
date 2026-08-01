@@ -36,7 +36,7 @@ curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org   # 返回出口 IP
 出口默认用**其主机的系统解析器**解析主机名目标。若出口所在网络的 ISP 解析器被投毒/过滤，可用 `-dns-server` 钉一个可信解析器：
 
 ```bash
-node -exit -region JP -dns-server 1.1.1.1        # 或 8.8.8.8、host:port（默认 :53）
+whatgate -exit -region JP -dns-server 1.1.1.1        # 或 8.8.8.8、host:port（默认 :53）
 ```
 
 解析**仍在出口侧**发生，只是改由指定服务器应答，隔离本地 DNS 的投毒/审查面。空值 = 系统解析器。

@@ -27,7 +27,7 @@
 
 ## 🔴 F1 — 出口 SSRF：可被用来打穿出口的内网 / 本机 / 云元数据（HIGH）
 
-**位置**：`cmd/node/main.go`（`d.DialContext(ctx,"tcp",addr)`）、`internal/node/udp.go`
+**位置**：`cmd/whatgate/main.go`（`d.DialContext(ctx,"tcp",addr)`）、`internal/node/udp.go`
 （`ResolveUDPAddr`+`DialUDP`）、`internal/exit/guard.go`（`Authorize` 不校验目标 IP 段）。
 
 `ExitGuard` 只按端口/域名字符串/信任范围/声誉/并发过滤，**完全不限制目标 IP 段**。
