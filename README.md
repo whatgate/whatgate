@@ -1,66 +1,129 @@
 # WhatGate
 
-> **普通用户推荐：桌面客户端。** 新增了 WPF/XAML 风格的跨平台客户端，支持
-> Windows、macOS 和 Linux，内置首次连接引导、地区切换、启动/停止、共享出口开关和
-> 运行日志。构建与安装说明见 [desktop/README.md](desktop/README.md)。
+[![Release](https://img.shields.io/github/v/release/whatgate/whatgate)](https://github.com/whatgate/whatgate/releases/latest)
+[![Release build](https://github.com/whatgate/whatgate/actions/workflows/release.yml/badge.svg)](https://github.com/whatgate/whatgate/actions/workflows/release.yml)
+[![License](https://img.shields.io/github/license/whatgate/whatgate)](LICENSE)
 
-**一个邀请制的 P2P 代理分享网络。** 一群互相信任的人组成一张网，每个人既能借用别人在其他地区的出口访问受地域限制的内容，也能（在自己愿意时）成为别人的出口。没有中心服务器持有你的流量——代理数据在节点之间点对点加密直连。
+**一个面向信任圈的跨平台 P2P 网络客户端。** Windows、Linux 和 macOS 用户都可以
+通过桌面界面创建或加入网络，选择目标地区，并在自己愿意时向可信成员共享出口。
+代理数据在节点之间点对点加密传输，协调服务只负责邀请准入和节点发现。
 
-> ⚠️ **成为别人的出口默认是关闭的**，必须你主动开启。开启后有一整套保护机制（信任范围、流量策略、限额熔断、本地留痕）帮你抵御滥用。请在遵守当地法律法规的前提下使用。
+> **普通用户不需要命令行，也不需要打开 `http://127.0.0.1:7070`。** 连接设置、运行状态、
+> 高级管理、信任圈和共享出口均已内嵌到桌面客户端中。
 
-- **你能用它做什么**：连上一个你信任的人在目标地区的出口，让浏览器/应用的流量从那里出网。
-- **为什么是 P2P**：出口是**住宅 IP**（不是机房 IP 段），更难被目标站点识别为代理；发现与准入靠邀请制，不对公众开放。
-- **拿到就能跑**：编译为**单个静态二进制**，下载解压即用，不需要安装 Go 或任何运行时。
+> ⚠️ **共享出口默认关闭。** 只有用户主动开启后，设备才会为其他成员转发流量。
+> 请只加入可信网络，并遵守所在地法律法规。
 
-技术栈 Go + [libp2p](https://libp2p.io/)。完整架构见 [docs/architecture.md](docs/architecture.md)。
+## 下载桌面客户端
 
----
+当前正式版本：[**WhatGate v0.3.0**](https://github.com/whatgate/whatgate/releases/tag/v0.3.0)。
+安装包已包含 WhatGate 核心程序和所需运行时，不需要另外安装 Go 或 .NET。
 
-## 快速上手：用它上网
+| 操作系统 | 设备类型 | 下载 |
+|---|---|---|
+| Windows | 常见 Intel/AMD 电脑 | [Windows x64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_win-x64.zip) |
+| Windows | ARM64 电脑 | [Windows ARM64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_win-arm64.zip) |
+| Linux | `uname -m` 显示 `x86_64` | [Linux x64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_linux-x64.tar.gz) |
+| Linux | `uname -m` 显示 `aarch64`/`arm64` | [Linux ARM64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_linux-arm64.tar.gz) |
+| macOS | Intel Mac | [macOS x64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_osx-x64.zip) |
+| macOS | Apple 芯片（M1/M2/M3/M4/M5） | [macOS ARM64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_osx-arm64.zip) |
 
-假设有人给了你**协调器地址**、**邀请码**，以及（推荐）协调器启动时打印的**协调器公钥**。
+其他版本、命令行程序和校验文件见 [Releases](https://github.com/whatgate/whatgate/releases)。
 
-**1. 下载。** 到 [Releases](https://github.com/whatgate/whatgate/releases) 下对应平台的包（Windows/macOS/Linux × amd64/arm64），解压。里面的 `whatgate`（Windows 为 `whatgate.exe`）就是你要用的程序（`whatgate -version` 看版本，`SHA256SUMS` 可校验完整性）。
+## 安装
 
-**2. 连上网络，按地区自动选出口。**
+### Windows
+
+1. 解压下载的 ZIP 文件。
+2. 双击 `Install-WhatGate.cmd`。
+3. 安装器会自动启动 WhatGate，并在桌面创建 **WhatGate** 快捷方式。
+
+程序默认安装到当前用户的 `%LOCALAPPDATA%\Programs\WhatGate`，不需要管理员权限。
+当前版本尚未配置 Windows 代码签名，系统可能显示安全确认提示。
+
+### Linux
 
 ```bash
-# -to JP：想要日本出口；-socks：本地 SOCKS5 代理监听地址
-# -trust-scope：你愿意用谁的出口（conservative=只用信任圈内的；open=也用陌生人的）
-whatgate -coordinator https://<host>:8080 -coordinator-key <协调器公钥> \
-     -invite <邀请码> -to JP -trust-scope open -socks 127.0.0.1:1080
+tar -xzf whatgate-desktop_v0.3.0_linux-x64.tar.gz
+cd whatgate-desktop_v0.3.0_linux-x64
+chmod +x install.sh
+./install.sh
 ```
 
-**3. 让应用走这个代理。** 把应用的 SOCKS5 代理指向 `127.0.0.1:1080`，并确保**由代理远端解析域名**（这样才能真正解锁、且不泄漏你在查哪些站点）：
+安装后可从应用菜单启动，或运行：
 
 ```bash
-# --socks5-hostname = 远端解析（正确）；不要用 --socks5（本地解析，会泄漏 DNS）
-curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org   # 返回的应是出口的 IP
+~/.local/bin/whatgate-ui
 ```
 
-> 浏览器：Firefox 设 `network.proxy.socks_remote_dns = true`；Chrome 经 SOCKS5 时默认远端解析。DNS 解析模型与防泄漏详见 [docs/dns.md](docs/dns.md)。
+ARM64 用户把文件名和目录中的 `linux-x64` 换成 `linux-arm64`。
 
-### 想先试一下，手头没有协调器？
+### macOS
 
-两台机器（或两个终端）直接连，不需要协调器：
+解压 ZIP 文件，将 `WhatGate.app` 拖入“应用程序”目录。当前版本尚未完成 Apple
+签名和公证，部分系统会显示开发者验证提示。
+
+## 第一次使用
+
+### 我是第一个使用者
+
+1. 打开 WhatGate，选择 **“创建我的网络”**。
+2. 无需邀请码；保持默认协调端口 `8080` 和“仅信任圈”。
+3. 点击 **“创建并启动网络”**。
+4. 在首页复制自动生成的协调服务地址和邀请信息，发送给可信成员。
+
+客户端会自动启动本机协调服务、登记首位管理员并生成随机成员邀请码。首位管理员创建
+成功后，无邀请码入口会立即关闭，后续成员必须持有效邀请加入。
+
+> 首台设备不能把自己当作自己的远程出口。需要至少另一台设备加入并主动开启“共享出口”，
+> 首台设备才会获得可使用的远程出口。
+
+### 加入已有网络
+
+1. 选择 **“加入已有网络”**。
+2. 填写管理员提供的协调服务地址和邀请码。
+3. 选择目标地区，保持“仅信任圈”，然后启动连接。
+4. 如管理员希望这台设备提供出口，可在连接成功后手动开启“共享出口”。
+
+局域网创建者需要允许 WhatGate 通过防火墙，并允许可信局域网访问 TCP `8080`。
+内置协调服务使用 HTTP，只适合可信局域网；跨互联网部署必须使用 HTTPS 协调服务。
+
+## 让浏览器或应用使用连接
+
+连接成功后，客户端会显示本地 SOCKS5 地址，默认是：
+
+```text
+127.0.0.1:1080
+```
+
+把支持 SOCKS5 的浏览器或应用指向该地址，并启用“通过 SOCKS 代理解析 DNS”。测试命令：
 
 ```bash
-whatgate -exit                                          # 终端 1：起个出口，复制它打印的某个 /p2p/ 多地址
-whatgate -connect <出口多地址> -socks 127.0.0.1:1080     # 终端 2：经它建隧道
 curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 ```
 
-### 图形界面（推荐）
+返回的公网 IP 应是当前所选出口的地址。Firefox 用户需要启用
+`network.proxy.socks_remote_dns`；DNS 解析模型见 [docs/dns.md](docs/dns.md)。
 
-普通用户建议安装 `desktop/WhatGate.Desktop` 桌面客户端。连接状态、地区切换、代理地址、
-共享出口、节点详情和信任圈管理都直接显示在客户端内，不需要打开 `127.0.0.1:7070`
-网页，也不需要手工重启核心程序。
+## 命令行快速上手（高级用户）
 
-第一个使用者可在连接设置中直接选择“创建我的网络”，无需预先获取邀请码。客户端会
-自动启动本机协调服务、登记首位管理员并生成后续成员邀请码；已有网络的成员再使用地址
-和邀请码加入。
+如果管理员已经提供协调器地址、邀请码和协调器公钥，也可以直接运行核心程序：
 
-安装与打包说明见 [桌面客户端说明](desktop/README.md)。
+```bash
+whatgate -coordinator https://<host>:8080 -coordinator-key <协调器公钥> \
+  -invite <邀请码> -to JP -trust-scope conservative -socks 127.0.0.1:1080
+```
+
+两台机器也可以不使用协调器直接连接：
+
+```bash
+whatgate -exit                                      # 设备 1：启动出口并复制 /p2p/ 多地址
+whatgate -connect <出口多地址> -socks 127.0.0.1:1080 # 设备 2：连接出口
+```
+
+桌面客户端的开发和打包说明见 [desktop/README.md](desktop/README.md)。技术栈为 Go、
+[libp2p](https://libp2p.io/)、Avalonia 和 XAML；完整架构见
+[docs/architecture.md](docs/architecture.md)。
 
 ---
 
@@ -191,7 +254,9 @@ go build -o bin/ ./...                                # 产出 bin/coordinator�
 go build -tags tun -o bin/whatgate-tun ./cmd/whatgate # 可选：全局 TUN 模式
 ```
 
-一键交叉编译六平台发布包到 `dist/`：`scripts/build-release.sh v0.1.0`。维护者推 `git tag v0.1.0 && git push origin v0.1.0`，GitHub Actions 会自动构建并创建 Release。
+构建核心命令行发布包：`scripts/build-release.sh v0.3.0`。构建桌面客户端安装包：
+`./scripts/build-desktop.ps1 -Version v0.3.0`。维护者推送版本标签后，GitHub Actions
+会在 Windows、Linux、macOS 原生环境生成 x64/ARM64 包并创建 Release。
 
 跑测试：`go test ./...`。完整测试指南（单元 + 多进程端到端出网 + 信任范围/出口保护/TUN 验证）见 **[docs/testing.md](docs/testing.md)**。
 
