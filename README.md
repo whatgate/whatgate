@@ -4,289 +4,165 @@
 [![Release build](https://github.com/whatgate/whatgate/actions/workflows/release.yml/badge.svg)](https://github.com/whatgate/whatgate/actions/workflows/release.yml)
 [![License](https://img.shields.io/github/license/whatgate/whatgate)](LICENSE)
 
-**一个面向信任圈的跨平台 P2P 网络客户端。** Windows、Linux 和 macOS 用户都可以
-通过桌面界面创建或加入网络，选择目标地区，并在自己愿意时向可信成员共享出口。
-代理数据在节点之间点对点加密传输，协调服务只负责邀请准入和节点发现。
+**面向信任圈的跨平台 P2P 网络客户端。**
 
-> **普通用户不需要命令行，也不需要打开 `http://127.0.0.1:7070`。** 连接设置、运行状态、
-> 高级管理、信任圈和共享出口均已内嵌到桌面客户端中。
+WhatGate 把在线设备组成一个由成员邀请、信任圈和可选共享出口构成的 P2P 网络。客户端按目标地区发现出口，把浏览器或应用的代理流量通过加密的 libp2p 隧道送到远程出口；协调器只负责准入、节点发现和控制元数据，不承载代理业务流量。
 
-> ⚠️ **共享出口默认关闭。** 只有用户主动开启后，设备才会为其他成员转发流量。
-> 请只加入可信网络，并遵守所在地法律法规。
+> 桌面客户端是普通用户的主要入口，不需要手动操作本地 Web 控制台，也不需要安装 Go 或 .NET。
 
-## 下载桌面客户端
+## 当前能力
 
-当前正式版本：[**WhatGate v0.3.0**](https://github.com/whatgate/whatgate/releases/tag/v0.3.0)。
-安装包已包含 WhatGate 核心程序和所需运行时，不需要另外安装 Go 或 .NET。
-
-| 操作系统 | 设备类型 | 下载 |
+| 能力 | 状态 | 说明 |
 |---|---|---|
-| Windows | 常见 Intel/AMD 电脑 | [Windows x64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_win-x64.zip) |
-| Windows | ARM64 电脑 | [Windows ARM64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_win-arm64.zip) |
-| Linux | `uname -m` 显示 `x86_64` | [Linux x64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_linux-x64.tar.gz) |
-| Linux | `uname -m` 显示 `aarch64`/`arm64` | [Linux ARM64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_linux-arm64.tar.gz) |
-| macOS | Intel Mac | [macOS x64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_osx-x64.zip) |
-| macOS | Apple 芯片（M1/M2/M3/M4/M5） | [macOS ARM64](https://github.com/whatgate/whatgate/releases/download/v0.3.0/whatgate-desktop_v0.3.0_osx-arm64.zip) |
+| 跨平台桌面客户端 | ✅ | Windows / Linux / macOS，Avalonia + XAML |
+| 创建 / 加入网络 | ✅ | 首位成员自举；后续通过邀请码加入 |
+| 本地 SOCKS5 | ✅ | TCP CONNECT，并支持 UDP ASSOCIATE |
+| P2P 加密隧道 | ✅ | libp2p，直连优先，必要时可走 Circuit Relay v2 |
+| 地区选路 | ✅ | 地区过滤，并结合信任、延迟、负载排序 |
+| 信任圈 | ✅ | 小网成员、跨组认可、conservative / open |
+| 声誉系统 | ✅ | 成员 / 小网声誉、事件反馈、衰减、持久化 |
+| ExitGuard | ✅ | 信任、端口/域名/IP/CIDR、并发、速率、带宽熔断、SSRF |
+| DNS 出口解析 | ✅ | 主机名由出口侧解析；TCP 可指定 DNS 服务器 |
+| 威胁情报 | ✅ | threat feed 定期更新恶意域名黑名单 |
+| 审计与指标 | ✅ | JSON Lines 审计；本地 JSON metrics |
+| Coordinator 多端点 | ✅ | failover、已验证目录缓存、签名 bootstrap 自愈 |
+| 控制面响应签名 | ✅ | directory / relay / bootstrap + pinning + anti-rollback |
+| 全局 TUN | 🧪 | 代码已实现，需要平台与真实网络验证 |
+| 私有认证 DHT | 🧪 | Tier C 实验能力，真实异网验证仍是前提 |
+| 主动探测抗性 / 混淆 | 🗺️ | 后续路线图，不等同于现有 TLS / 多端点能力 |
 
-其他版本、命令行程序和校验文件见 [Releases](https://github.com/whatgate/whatgate/releases)。
+完整盘点见 docs/features.md。
 
-## 安装
+## 下载
 
-### Windows
+正式安装包以 GitHub Releases 为准：
 
-1. 解压下载的 ZIP 文件。
-2. 双击 `Install-WhatGate.cmd`。
-3. 安装器会自动启动 WhatGate，并在桌面创建 **WhatGate** 快捷方式。
+https://github.com/whatgate/whatgate/releases
 
-程序默认安装到当前用户的 `%LOCALAPPDATA%\Programs\WhatGate`，不需要管理员权限。
-当前版本尚未配置 Windows 代码签名，系统可能显示安全确认提示。
-
-### Linux
-
-```bash
-tar -xzf whatgate-desktop_v0.3.0_linux-x64.tar.gz
-cd whatgate-desktop_v0.3.0_linux-x64
-chmod +x install.sh
-./install.sh
-```
-
-安装后可从应用菜单启动，或运行：
-
-```bash
-~/.local/bin/whatgate-ui
-```
-
-ARM64 用户把文件名和目录中的 `linux-x64` 换成 `linux-arm64`。
-
-### macOS
-
-解压 ZIP 文件，将 `WhatGate.app` 拖入“应用程序”目录。当前版本尚未完成 Apple
-签名和公证，部分系统会显示开发者验证提示。
+Windows：解压后运行 Install-WhatGate.cmd。
+Linux：解压后运行 install.sh。
+macOS：将 WhatGate.app 放入“应用程序”。
 
 ## 第一次使用
 
-### 我是第一个使用者
+### 创建新网络
 
-1. 打开 WhatGate，选择 **“创建我的网络”**。
-2. 无需邀请码；保持默认协调端口 `8080` 和“仅信任圈”。
-3. 点击 **“创建并启动网络”**。
-4. 在首页复制自动生成的协调服务地址和邀请信息，发送给可信成员。
+1. 打开 WhatGate，选择“创建我的网络”。
+2. 选择协调端口与目标地区，默认使用“仅信任圈”。
+3. 点击“创建并启动网络”。
+4. 客户端启动本地协调器，并把当前设备登记为首位管理员。
+5. 生成成员邀请码，把协调器地址和邀请码交给可信成员。
 
-客户端会自动启动本机协调服务、登记首位管理员并生成随机成员邀请码。首位管理员创建
-成功后，无邀请码入口会立即关闭，后续成员必须持有效邀请加入。
-
-> 首台设备不能把自己当作自己的远程出口。需要至少另一台设备加入并主动开启“共享出口”，
-> 首台设备才会获得可使用的远程出口。
+首位成员自举只在网络没有成员时可用；之后加入必须使用邀请码。
 
 ### 加入已有网络
 
-1. 选择 **“加入已有网络”**。
-2. 填写管理员提供的协调服务地址和邀请码。
-3. 选择目标地区，保持“仅信任圈”，然后启动连接。
-4. 如管理员希望这台设备提供出口，可在连接成功后手动开启“共享出口”。
+1. 选择“加入已有网络”。
+2. 填写管理员提供的协调器地址和邀请码。
+3. 选择目标地区与信任范围。
+4. 启动连接。
+5. 把浏览器或应用的 SOCKS5 代理设为 127.0.0.1:1080。
 
-局域网创建者需要允许 WhatGate 通过防火墙，并允许可信局域网访问 TCP `8080`。
-内置协调服务使用 HTTP，只适合可信局域网；跨互联网部署必须使用 HTTPS 协调服务。
+互联网部署时，协调器应使用 HTTPS；明文 HTTP 只适合可信局域网控制面。
 
-## 让浏览器或应用使用连接
+## 使用代理
 
-连接成功后，客户端会显示本地 SOCKS5 地址，默认是：
+默认本地 SOCKS5 地址：
 
-```text
 127.0.0.1:1080
-```
 
-把支持 SOCKS5 的浏览器或应用指向该地址，并启用“通过 SOCKS 代理解析 DNS”。测试命令：
+测试远端出口：
 
-```bash
-curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
-```
+    curl --socks5-hostname 127.0.0.1:1080 https://api.ipify.org
 
-返回的公网 IP 应是当前所选出口的地址。Firefox 用户需要启用
-`network.proxy.socks_remote_dns`；DNS 解析模型见 [docs/dns.md](docs/dns.md)。
+使用域名时应优先选择“远端解析 DNS”的 SOCKS5 模式，详见 docs/dns.md。
 
-## 命令行快速上手（高级用户）
+## 共享出口
 
-如果管理员已经提供协调器地址、邀请码和协调器公钥，也可以直接运行核心程序：
+节点可以主动成为出口。共享出口默认关闭，开启后其他成员的目标连接会从该设备出网。
 
-```bash
-whatgate -coordinator https://<host>:8080 -coordinator-key <协调器公钥> \
-  -invite <邀请码> -to JP -trust-scope conservative -socks 127.0.0.1:1080
-```
+ExitGuard 可控制：
 
-两台机器也可以不使用协调器直接连接：
+- 谁能使用出口：trust scope / reputation
+- 哪些端口、域名、IP/CIDR 可以访问
+- 总并发、单请求方并发与建连速率
+- 单请求方带宽与熔断
+- 私有、环回、链路本地和云 metadata 目标
+- 威胁情报黑名单
+- 审计日志和运行指标
 
-```bash
-whatgate -exit                                      # 设备 1：启动出口并复制 /p2p/ 多地址
-whatgate -connect <出口多地址> -socks 127.0.0.1:1080 # 设备 2：连接出口
-```
+详见 docs/configuration.md。
 
-桌面客户端的开发和打包说明见 [desktop/README.md](desktop/README.md)。技术栈为 Go、
-[libp2p](https://libp2p.io/)、Avalonia 和 XAML；完整架构见
-[docs/architecture.md](docs/architecture.md)。
+## 命令行快速上手
 
----
+协调器：
 
-## 成为出口：分享你的出口（安全第一）
+    coordinator -addr :8080 -invite welcome -state ./state.json -signing-key ./signing.key
 
-加 `-exit` 就会开始为别人转发流量。**这意味着别人访问的目标会看到你的 IP**，所以出口默认带一整套保护（ExitGuard），你可以按需收紧：
+出口：
 
-```bash
-# 只给自己的小网当出口、封高危端口、限并发与带宽
-whatgate -coordinator https://<host>:8080 -coordinator-key <公钥> -invite <邀请码> \
-     -exit -region JP \
-     -group myfriends -group-secret ourSecret \
-     -exit-scope conservative \
-     -max-conns 50 -requester-bandwidth 5000000
-```
+    whatgate -exit -region JP
 
-**你能控制谁用、用来做什么：**
+按地区发现出口：
 
-| 想做什么 | 用哪个 |
-|---|---|
-| 只服务信任圈内的人（拒陌生人） | `-exit-scope conservative` |
-| 只和特定小网互信 | `-group` + `-group-secret`（首个加入者设口令，陌生人无口令进不来） |
-| 拒绝低声誉/曾滥用的请求方 | `-min-reputation`（滥用者访问被封目标会被扣分，随后被各出口拒服务） |
-| 封目标端口 | SMTP（25/465/587）默认封；`-block-ports` 追加 |
-| 封目标域名/IP | `-block-domains`（大小写/尾点不敏感，**自动覆盖子域**，也支持 IP/CIDR） |
-| 自动拉黑已知恶意域名 | `-threat-feed <url\|file>`（定期刷新） |
+    whatgate -coordinator https://<host>:8080       -coordinator-key <协调器公钥>       -invite <邀请码>       -to JP       -trust-scope conservative       -socks 127.0.0.1:1080
 
-**防被当成免费/危险资源（默认或按需开启）：**
+手动直连出口：
 
-- **限量**：`-max-conns`（总并发）、`-max-conns-per-requester`（单人并发）、`-requester-rate`（单人建连速率，挡快开快关）、`-requester-bandwidth`（单人吞吐上限，**超了就熔断**：切断当前传输、拒其新连接、并下调其声誉，预算随时间自动回补；TCP/UDP 共用一份预算）。
-- **不被拿去打内网**（SSRF 防护，**默认开启**）：出口拒绝连接私有/环回/链路本地地址（你的 LAN、`127.0.0.1`、云元数据 `169.254.169.254`）；域名按解析到的真实 IP 判定（防 DNS rebinding）。确需放开用 `-allow-private-targets`。
-- **防挂死拖垮**：每条隧道默认带超时（收目标 10s、拨号 15s）。
-- **可追溯**：`-audit-log <file>` 把每次服务/拒绝（时间/请求方/目标/结果）以 JSON Lines 落盘，供事后追责。
-- **用可信 DNS 出网**：`-dns-server <host[:port]>` 让出口用指定解析器（隔离本地 DNS 投毒/审查），解析仍在出口侧。见 [docs/dns.md](docs/dns.md)。
+    whatgate -exit
+    whatgate -connect <出口多地址> -socks 127.0.0.1:1080
 
----
+完整参数见 docs/configuration.md。
 
-## 自己搭一张网（运营者）
+## 项目结构
 
-起一个协调器就有了自己的网。它只碰**元数据**（邀请准入、节点目录、中继广播），**看不到代理流量**。
+    cmd/coordinator/          Coordinator 命令行入口
+    cmd/whatgate/             节点命令行入口
+    desktop/                  Avalonia 桌面客户端
 
-```bash
-coordinator -addr :8080 -invite welcome -state ./state.json -signing-key ./signing.key
-```
+    internal/coordinator/     准入、目录、信任/声誉控制面
+    internal/node/            libp2p host、NAT、打洞、中继、成员门控
+    internal/tunnel/          客户端/出口隧道
+    internal/proxy/           SOCKS5 / UDP 入口
+    internal/routing/         地区、信任、延迟、负载选路
+    internal/trust/           信任圈与声誉
+    internal/exit/            ExitGuard 与 SSRF 防护
+    internal/discovery/       控制面签名对象
+    internal/membership/      成员凭据、角色、撤销
+    internal/tun/             全局 TUN
+    internal/relay/           Circuit Relay v2
+    internal/webui/           本地状态控制接口
+    internal/metrics/         运行指标
+    internal/audit/           审计日志
+    internal/config/          JSON 配置覆盖
+    pkg/protocol/             隧道 / datagram wire 协议
 
-把启动打印的**邀请码**发给你要接纳的人，把**协调器公钥**也给他们（作为 `-coordinator-key`）。出口方与客户端就能加入了（见上面两节）。
+## 文档导航
 
-**上生产前，请逐条对照：**
-
-- **加密控制面**：`-tls-cert`/`-tls-key`（或置于 TLS 反代后），否则邀请码/小网口令**明文过网**。
-- **签名目录**：`-signing-key` 让协调器对目录与中继地址签名；节点钉住 `-coordinator-key` 后就能拒绝被 MITM 或换成恶意镜像的协调器。**强烈建议**。
-- **抗刷注册**：`-rate-limit`（按 IP 限速）、`-sybil-max-identities`（同 IP 攒太多身份就隔离）。**若把协调器放在 CDN/反代后**，必须同时设 `-trusted-proxies <IP/CIDR>`，否则所有用户会被当成同一个 IP——限速互相拖累，Sybil 隔离更可能**把整个用户群锁在门外**（未配时启用会有启动告警）。
-- **状态留存**：`-state` 让准入/小网/声誉跨重启保留；`-reputation-decay` 让处罚随时间淡出。
-- **中继配额**：协调器兼跑 Circuit Relay v2（NAT 用户的兜底路径）；`-relay-*` 系列可限每电路时长/数据、预约与电路数，防中继被当免费带宽。
-
-多协调器 + 客户端故障切换、断线缓存、带外自愈等抗封锁能力见下方「进阶」与 [docs/anti-censorship.md](docs/anti-censorship.md)。
-
----
-
-## 进阶
-
-<details>
-<summary><b>抗封锁（协调器被封也能续命）</b></summary>
-
-面向"协调器/中继/握手指纹被国家级防火墙盯上"的分层加固，多为默认可选：
-
-- **响应签名 + 多端点切换 + 本地缓存**：`-coordinator` 逗号分隔多地址自动故障切换；`-coordinator-cache`（需 `-coordinator-key`）把**已验签**的目录落盘，协调器全被封时用缓存续命；一切缓存/切换都仍受签名/过期/回滚校验。
-- **端口伪装**：`-listen` 加 `/ip4/0.0.0.0/tcp/443/ws` 让数据面骑 :443 像 web 流量（粗筛级，非探测抗性）。
-- **带外自愈**：运营者用钉扎密钥离线签一份端点清单（`coordinator -emit-bootstrap`）托管到 CDN/GitHub raw，节点 `-bootstrap-url` 在所有已知协调器被封时拉取、验签后切换重试。
-
-完整威胁建模与路线图见 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
-</details>
-
-<details>
-<summary><b>去中心化发现（🧪 实验性）</b></summary>
-
-当协调器（含多端点/缓存/带外清单）**全部失效**时，节点还能经一张**私有认证 DHT** 发现并连上出口，不依赖任何单台服务器。信任锚是一把**离线根密钥**：它授权协调器的在线 issuer 给成员发证，出口在 DHT 上的记录都要回链到这把根才被采信；非成员记录、角色越权、被撤销者一律拒绝。
-
-> 仅经单元测试 + 单机烟测；"断协调器仍能经 DHT 出网"需两台异网机器端到端验证。默认关闭，用 `-dht` + `-root-key` 开启。命令示例与对手驱动评审见 **[docs/c1-decentralized-discovery.md](docs/c1-decentralized-discovery.md)**。
-</details>
-
-<details>
-<summary><b>全局 VPN 模式（TUN）</b></summary>
-
-`whatgate-tun`（或 `go build -tags tun`）把**整机流量**透明导入网络，而不只是配了代理的应用。运行需管理员/root，Windows 另需 `wintun.dll`；`-tun-auto-route` 自动接管默认路由并排除自身流量。见 **[docs/tun-and-mobile.md](docs/tun-and-mobile.md)**（含移动端接入设计）。
-</details>
-
-<details>
-<summary><b>可观测性（日志 / 指标）</b></summary>
-
-- **结构化日志**：`-log-format json` 让 whatgate/coordinator 每行输出一个 JSON 对象（`level`/`msg`/字段），便于日志采集器过滤/聚合；默认 `text` 人类可读。
-- **指标**：`whatgate -metrics-addr 127.0.0.1:9090` 以 JSON 暴露 `/metrics`——出口的服务量与**按原因分类的拒绝量**，用来确认限流/隔离/信任策略是否在生效。
-
-```bash
-curl -s http://127.0.0.1:9090/metrics
-# { "exit_served": 128, "exit_denied:untrusted": 12, "exit_denied:requester-rate": 5 }
-```
-
-> ⚠️ `/metrics` **无鉴权**。请把 `-metrics-addr` 绑到 `127.0.0.1`（如上），或置于带鉴权的反代之后——不要绑到公网接口，否则会把出口的运营/滥用信号暴露给任何人。
-</details>
-
-<details>
-<summary><b>配置文件（替代一堆命令行 flag）</b></summary>
-
-flag 多时可写进一个 JSON 文件用 `-config` 加载——**键就是 flag 名**，命令行显式给出的覆盖文件（优先级：命令行 > 文件 > 默认）。未知键会报错（防拼写）。whatgate 与 coordinator 都支持。
-
-```jsonc
-// coord.json
-{ "addr": ":8080", "invite": "welcome", "rate-limit": 5, "sybil-max-identities": 50 }
-```
-
-```bash
-coordinator -config coord.json              # 全从文件读
-coordinator -config coord.json -uses 7      # -uses 覆盖文件里的值
-```
-
-> ⚠️ 配置文件能设置**任意** flag，包括 `-root-key`/`-tls-key`/`-signing-key` 等密钥路径。请把它当作和命令行同等敏感——**妥善设置文件权限**，别提交进版本库。
-</details>
-
----
-
-## 构建与开发
-
-从源码构建：
-
-```bash
-go build -o bin/ ./...                                # 产出 bin/coordinator、bin/whatgate
-go build -tags tun -o bin/whatgate-tun ./cmd/whatgate # 可选：全局 TUN 模式
-```
-
-构建核心命令行发布包：`scripts/build-release.sh v0.3.0`。构建桌面客户端安装包：
-`./scripts/build-desktop.ps1 -Version v0.3.0`。维护者推送版本标签后，GitHub Actions
-会在 Windows、Linux、macOS 原生环境生成 x64/ARM64 包并创建 Release。
-
-跑测试：`go test ./...`。完整测试指南（单元 + 多进程端到端出网 + 信任范围/出口保护/TUN 验证）见 **[docs/testing.md](docs/testing.md)**。
-
-<details>
-<summary><b>项目结构</b></summary>
-
-```
-cmd/coordinator   协调服务器入口（兼跑 Circuit Relay）
-cmd/whatgate      节点入口（既是客户端也是出口）
-internal/proxy    本地 SOCKS5 入口
-internal/tunnel   隧道两端（出/入），解耦具体传输
-internal/node     libp2p 接入：host、隧道、NAT 穿透、中继
-internal/relay    Circuit Relay v2 中继服务
-internal/coordinator  节点目录、邀请准入、信任图、HTTP 控制面
-internal/trust    信任图（小网/背书/层级）、信任范围、两级声誉
-internal/routing  选路引擎（地区 + 信任/延迟/负载综合排序）
-internal/exit     ExitGuard 出口策略（信任范围/端口/域名/限额/熔断）
-internal/tun      TUN 全局模式（tun2socks，-tags tun 构建标签）
-pkg/protocol      隧道 wire 协议（目标地址编解码）
-```
-</details>
+- [文档中心](docs/README.md)
+- [功能总览](docs/features.md)
+- [架构与数据流](docs/architecture.md)
+- [参数与配置](docs/configuration.md)
+- [开发、构建与发布](docs/development.md)
+- [测试与真实环境验证](docs/testing.md)
+- [DNS 策略](docs/dns.md)
+- [安全评审](docs/security-review.md)
+- [抗封锁设计](docs/anti-censorship.md)
+- [路线图 / 待办](docs/backlog.md)
+- [去中心化发现设计](docs/c1-decentralized-discovery.md)
+- [DHT 可行性](docs/c1-dht-compat.md)
+- [pnet 兼容性](docs/pnet-compat.md)
+- [TUN / 移动端设计](docs/tun-and-mobile.md)
+- [桌面客户端开发](desktop/README.md)
 
 ## 开发状态
 
-核心链路（M1–M6）已完成：本地 SOCKS5 + libp2p 直连出网、邀请准入 + 目录发现 + NAT 穿透 + 中继兜底、小网/信任/声誉、地区+延迟+负载综合选路、ExitGuard 出口治理、TUN 全局模式（代码完成待真机验证）。
+核心 M1–M6 链路已经实现；“代码已实现”与“所有平台/公网环境已经验证”不是同一个状态。
 
-后续增强、抗封锁路线图与真机验证清单见 **[docs/backlog.md](docs/backlog.md)** 与 **[docs/anti-censorship.md](docs/anti-censorship.md)**。
+需要重点区分：
 
-> 真实跨 NAT 打洞与 AutoRelay 自动预约需在两台异网机器上实测；本地回环已验证隧道与中继数据路径本身。
+- 跨 NAT 打洞、中继、TUN 默认路由等能力仍需要真实环境验证。
+- 私有 DHT 属于实验能力。
+- 多协调器、TLS、签名 bootstrap 解决的是控制面可用性和真实性，不等于完整的流量混淆或主动探测抗性。
 
-## 许可
-
-[MIT](LICENSE) © 2026 WhatGate
+许可：[MIT](LICENSE) © 2026 WhatGate
